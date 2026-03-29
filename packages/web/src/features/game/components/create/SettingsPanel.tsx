@@ -111,12 +111,17 @@ const SettingsPanel = ({
     setPassword("")
   }
 
-  const currentAudio = audioSource === "remote" ? remoteAudioUrl : localAudioUrl
-  const previewAudio = currentAudio.startsWith(LOCAL_MEDIA_PREFIX) ||
-    currentAudio.startsWith("https://") ||
-    currentAudio.startsWith("http://")
-    ? currentAudio
-    : undefined
+  const savedAudio = normalizeAudioUrl(settings.defaultAudio)
+  const uploadedAudio = normalizeAudioUrl(uploadedAudioUrl)
+  const previewAudio =
+    audioSource === "local"
+      ? uploadedAudio ??
+        (savedAudio?.startsWith(LOCAL_MEDIA_PREFIX) ? savedAudio : undefined)
+      : uploadedAudio
+        ? undefined
+        : savedAudio && !savedAudio.startsWith(LOCAL_MEDIA_PREFIX)
+          ? savedAudio
+          : undefined
 
   return (
     <div className="z-10 flex w-full max-w-4xl flex-col gap-5 rounded-md bg-white p-4 shadow-sm md:p-6">
