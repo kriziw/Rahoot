@@ -1,5 +1,14 @@
 # Changelog
 
+## [1.10.1](https://github.com/kriziw/MindBuzz/compare/v1.10.0...v1.10.1) (2026-03-29)
+
+
+### Bug Fixes
+
+* harden manager audio URL handling ([14b2a8f](https://github.com/kriziw/MindBuzz/commit/14b2a8f672a6692af6ad76b0dc8e950f8428bbe8))
+* harden manager audio URLs ([580b87a](https://github.com/kriziw/MindBuzz/commit/580b87a7b59ffc23f0886c50f1a52912e377947b))
+* preview only trusted audio sources ([8893cc4](https://github.com/kriziw/MindBuzz/commit/8893cc408e52b15680ac8b503da736293fc40f69))
+
 ## [1.10.0](https://github.com/kriziw/MindBuzz/compare/v1.9.1...v1.10.0) (2026-03-29)
 
 
