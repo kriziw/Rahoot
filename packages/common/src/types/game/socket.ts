@@ -1,5 +1,8 @@
 import type {
+  ActiveManagerGame,
   GameUpdateQuestion,
+  ManagerAccount,
+  ManagerSession,
   ManagerSettings,
   ManagerSettingsUpdate,
   Player,
@@ -72,6 +75,12 @@ export interface ServerToClientEvents {
   "manager:quizzCreated": (_quizz: QuizzWithId) => void
   "manager:quizzDeleted": (_quizzId: string) => void
   "manager:quizzUpdated": (_quizz: QuizzWithId) => void
+  "manager:bootstrapState": (_data: { requiresSetup: boolean }) => void
+  "manager:authSuccess": (_data: { manager: ManagerSession }) => void
+  "manager:activeGame": (_game: ActiveManagerGame | null) => void
+  "manager:managersList": (_managers: ManagerAccount[]) => void
+  "manager:managerCreated": (_manager: ManagerAccount) => void
+  "manager:managerUpdated": (_manager: ManagerAccount) => void
   "manager:historyList": (_history: QuizRunHistorySummary[]) => void
   "manager:historyExportReady": (_data: {
     filename: string
@@ -84,16 +93,35 @@ export interface ServerToClientEvents {
 export interface ClientToServerEvents {
   // Manager actions
   "game:create": (_quizzId: string) => void
-  "manager:auth": (_password: string) => void
+  "manager:getBootstrapState": () => void
+  "manager:createInitialAdmin": (_data: {
+    username: string
+    password: string
+  }) => void
+  "manager:auth": (_data: { username: string; password: string }) => void
   "manager:getDashboard": () => void
   "manager:createQuizz": (_data: { subject: string }) => void
   "manager:deleteQuizz": (_data: { quizzId: string }) => void
   "manager:updateQuizz": (_data: { quizzId: string; quizz: Quizz }) => void
+  "manager:listManagers": () => void
+  "manager:createManager": (_data: {
+    username: string
+    password: string
+  }) => void
+  "manager:resetManagerPassword": (_data: {
+    managerId: string
+    password: string
+  }) => void
+  "manager:setManagerDisabled": (_data: {
+    managerId: string
+    disabled: boolean
+  }) => void
   "manager:updateSettings": (_data: ManagerSettingsUpdate) => void
   "manager:uploadMedia": (_data: { filename: string; content: string }) => void
   "manager:downloadHistory": (_data: { runId: string }) => void
   "manager:logout": () => void
   "manager:reconnect": (_message: { gameId: string }) => void
+  "manager:takeOverGame": (_message: { gameId: string }) => void
   "manager:kickPlayer": (_message: { gameId: string; playerId: string }) => void
   "manager:startGame": (_message: MessageGameId) => void
   "manager:abortQuiz": (_message: MessageGameId) => void

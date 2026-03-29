@@ -67,7 +67,7 @@ const SelectQuizz = ({
     }
 
     const confirmed = window.confirm(
-      `Delete "${quizz.subject}"? This removes its JSON file.`,
+      `Delete "${quizz.subject}"? This removes it from your account.`,
     )
 
     if (!confirmed) {

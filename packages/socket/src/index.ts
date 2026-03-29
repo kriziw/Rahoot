@@ -1,5 +1,7 @@
+import type { ManagerSession } from "@mindbuzz/common/types/game"
 import { Server, Socket } from "@mindbuzz/common/types/game/socket"
 import { inviteCodeValidator } from "@mindbuzz/common/validators/auth"
+import AccountStore from "@mindbuzz/socket/services/accountStore"
 import Config from "@mindbuzz/socket/services/config"
 import Game from "@mindbuzz/socket/services/game"
 import History from "@mindbuzz/socket/services/history"
@@ -75,42 +77,119 @@ const io: Server = new ServerIO(httpServer, {
   path: "/ws",
   maxHttpBufferSize: 25 * 1024 * 1024,
 })
+
 Config.init()
+AccountStore.init()
 History.init()
 
 const registry = Registry.getInstance()
-const authenticatedManagers = new Set<string>()
-
-const emitManagerDashboard = (socket: Socket) => {
-  socket.emit("manager:quizzList", Config.quizz())
-  socket.emit("manager:historyList", History.listRuns())
-  socket.emit("manager:settings", Config.managerSettings())
-}
+const authenticatedManagers = new Map<string, ManagerSession>()
 
 const getSocketClientId = (socket: { handshake: { auth: { clientId?: string } } }) =>
   socket.handshake.auth.clientId ?? ""
 
-const ensureAuthenticatedManager = (socket: {
+const getAuthenticatedManager = (socket: {
   handshake: { auth: { clientId?: string } }
-}) => authenticatedManagers.has(getSocketClientId(socket))
+}) => authenticatedManagers.get(getSocketClientId(socket)) ?? null
 
-const revokeManagerGamesForClient = (clientId: string) => {
-  registry
+const requireAuthenticatedManager = (socket: Socket) => {
+  const manager = getAuthenticatedManager(socket)
+
+  if (!manager) {
+    socket.emit("manager:errorMessage", "Manager authentication required")
+  }
+
+  return manager
+}
+
+const requireAdminManager = (socket: Socket) => {
+  const manager = requireAuthenticatedManager(socket)
+
+  if (!manager) {
+    return null
+  }
+
+  if (manager.role !== "admin") {
+    socket.emit("manager:errorMessage", "Admin access required")
+
+    return null
+  }
+
+  return manager
+}
+
+const emitBootstrapState = (socket: Socket) => {
+  socket.emit("manager:bootstrapState", {
+    requiresSetup: AccountStore.isBootstrapRequired(),
+  })
+}
+
+const emitManagerDashboard = (socket: Socket, manager: ManagerSession) => {
+  const clientId = getSocketClientId(socket)
+  const activeGame = registry.getGameByManagerAccountId(manager.id)
+
+  socket.emit("manager:authSuccess", { manager })
+  socket.emit("manager:quizzList", AccountStore.listQuizzes(manager.id))
+  socket.emit("manager:historyList", History.listRuns(manager.id))
+  socket.emit("manager:settings", AccountStore.getManagerSettings(manager.id))
+  socket.emit(
+    "manager:activeGame",
+    activeGame ? activeGame.getActiveManagerGame(clientId) : null,
+  )
+
+  if (manager.role === "admin") {
+    socket.emit("manager:managersList", AccountStore.listManagers())
+  } else {
+    socket.emit("manager:managersList", [])
+  }
+}
+
+const revokeControlledGameForClient = (clientId: string, reason: string) => {
+  const game = registry
     .getAllGames()
-    .filter((game) => game.manager.clientId === clientId)
-    .forEach((game) => {
-      if (!game.started) {
-        game.abortCooldown()
-        game.clearPendingPlayerRemovals()
-        io.to(game.gameId).emit("game:reset", "Manager logged out")
-        registry.removeGame(game.gameId)
+    .find((item) => item.manager.clientId === clientId)
 
-        return
-      }
+  if (!game) {
+    return
+  }
 
-      game.revokeManagerControl("Manager logged out")
-      registry.markGameAsEmpty(game)
-    })
+  if (!game.started) {
+    game.abortCooldown()
+    game.clearPendingPlayerRemovals()
+    io.to(game.gameId).emit("game:reset", reason)
+    registry.removeGame(game.gameId)
+
+    return
+  }
+
+  game.revokeManagerControl(reason)
+  registry.markGameAsEmpty(game)
+}
+
+const revokeManagerAccountAccess = (managerId: string, reason: string) => {
+  authenticatedManagers.forEach((manager, clientId) => {
+    if (manager.id === managerId) {
+      authenticatedManagers.delete(clientId)
+    }
+  })
+
+  const activeGame = registry.getGameByManagerAccountId(managerId)
+
+  if (!activeGame) {
+    return
+  }
+
+  if (!activeGame.started) {
+    activeGame.abortCooldown()
+    activeGame.clearPendingPlayerRemovals()
+    io.to(activeGame.gameId).emit("game:reset", reason)
+    registry.removeGame(activeGame.gameId)
+
+    return
+  }
+
+  activeGame.revokeManagerControl(reason)
+  registry.markGameAsEmpty(activeGame)
 }
 
 console.log(`Socket server running on port ${WS_PORT}`)
@@ -120,6 +199,344 @@ io.on("connection", (socket) => {
   console.log(
     `A user connected: socketId: ${socket.id}, clientId: ${socket.handshake.auth.clientId}`,
   )
+
+  socket.on("manager:getBootstrapState", () => {
+    emitBootstrapState(socket)
+  })
+
+  socket.on("manager:createInitialAdmin", ({ username, password }) => {
+    try {
+      const manager = AccountStore.createInitialAdmin(username, password)
+
+      authenticatedManagers.set(getSocketClientId(socket), manager)
+      emitBootstrapState(socket)
+      emitManagerDashboard(socket, manager)
+    } catch (error) {
+      socket.emit(
+        "manager:errorMessage",
+        error instanceof Error
+          ? error.message
+          : "Failed to create the initial admin account",
+      )
+    }
+  })
+
+  socket.on("manager:auth", ({ username, password }) => {
+    try {
+      const result = AccountStore.authenticateManager(username, password)
+
+      if (!result.ok) {
+        socket.emit(
+          "manager:errorMessage",
+          result.reason === "disabled" ? "Account is disabled" : "Invalid credentials",
+        )
+
+        return
+      }
+
+      authenticatedManagers.set(getSocketClientId(socket), result.manager)
+      emitManagerDashboard(socket, result.manager)
+    } catch (error) {
+      socket.emit(
+        "manager:errorMessage",
+        error instanceof Error ? error.message : "Failed to sign in",
+      )
+    }
+  })
+
+  socket.on("manager:getDashboard", () => {
+    const manager = requireAuthenticatedManager(socket)
+
+    if (!manager) {
+      return
+    }
+
+    emitManagerDashboard(socket, manager)
+  })
+
+  socket.on("manager:logout", () => {
+    const clientId = getSocketClientId(socket)
+
+    authenticatedManagers.delete(clientId)
+    revokeControlledGameForClient(clientId, "Manager logged out")
+  })
+
+  socket.on("manager:listManagers", () => {
+    const manager = requireAdminManager(socket)
+
+    if (!manager) {
+      return
+    }
+
+    socket.emit("manager:managersList", AccountStore.listManagers())
+  })
+
+  socket.on("manager:createManager", ({ username, password }) => {
+    const manager = requireAdminManager(socket)
+
+    if (!manager) {
+      return
+    }
+
+    try {
+      const createdManager = AccountStore.createManager(username, password)
+
+      socket.emit("manager:managerCreated", createdManager)
+      socket.emit("manager:managersList", AccountStore.listManagers())
+    } catch (error) {
+      socket.emit(
+        "manager:errorMessage",
+        error instanceof Error ? error.message : "Failed to create manager",
+      )
+    }
+  })
+
+  socket.on("manager:resetManagerPassword", ({ managerId, password }) => {
+    const manager = requireAdminManager(socket)
+
+    if (!manager) {
+      return
+    }
+
+    try {
+      const updatedManager = AccountStore.resetManagerPassword(managerId, password)
+
+      socket.emit("manager:managerUpdated", updatedManager)
+      socket.emit("manager:managersList", AccountStore.listManagers())
+    } catch (error) {
+      socket.emit(
+        "manager:errorMessage",
+        error instanceof Error ? error.message : "Failed to reset password",
+      )
+    }
+  })
+
+  socket.on("manager:setManagerDisabled", ({ managerId, disabled }) => {
+    const manager = requireAdminManager(socket)
+
+    if (!manager) {
+      return
+    }
+
+    if (manager.id === managerId) {
+      socket.emit("manager:errorMessage", "You cannot disable your own account")
+
+      return
+    }
+
+    try {
+      const updatedManager = AccountStore.setManagerDisabled(managerId, disabled)
+
+      if (disabled) {
+        revokeManagerAccountAccess(managerId, "Your account has been disabled")
+      }
+
+      socket.emit("manager:managerUpdated", updatedManager)
+      socket.emit("manager:managersList", AccountStore.listManagers())
+    } catch (error) {
+      socket.emit(
+        "manager:errorMessage",
+        error instanceof Error ? error.message : "Failed to update manager",
+      )
+    }
+  })
+
+  socket.on("game:create", (quizzId) => {
+    const manager = requireAuthenticatedManager(socket)
+
+    if (!manager) {
+      return
+    }
+
+    const activeGame = registry.getGameByManagerAccountId(manager.id)
+
+    if (activeGame) {
+      socket.emit("manager:errorMessage", "You already have an active game")
+      socket.emit(
+        "manager:activeGame",
+        activeGame.getActiveManagerGame(getSocketClientId(socket)),
+      )
+
+      return
+    }
+
+    const quizz = AccountStore.getQuizz(manager.id, quizzId)
+
+    if (!quizz) {
+      socket.emit("game:errorMessage", "Quiz not found")
+
+      return
+    }
+
+    const game = new Game(
+      io,
+      socket,
+      manager,
+      quizz,
+      AccountStore.getManagerSettings(manager.id),
+    )
+
+    registry.addGame(game)
+    socket.emit(
+      "manager:activeGame",
+      game.getActiveManagerGame(getSocketClientId(socket)),
+    )
+  })
+
+  socket.on("manager:createQuizz", ({ subject }) => {
+    const manager = requireAuthenticatedManager(socket)
+
+    if (!manager) {
+      return
+    }
+
+    try {
+      const quizz = AccountStore.createQuizz(manager.id, subject)
+      socket.emit("manager:quizzCreated", quizz)
+      socket.emit("manager:quizzList", AccountStore.listQuizzes(manager.id))
+    } catch (error) {
+      socket.emit(
+        "manager:errorMessage",
+        error instanceof Error ? error.message : "Failed to create quiz",
+      )
+    }
+  })
+
+  socket.on("manager:updateQuizz", ({ quizzId, quizz }) => {
+    const manager = requireAuthenticatedManager(socket)
+
+    if (!manager) {
+      return
+    }
+
+    try {
+      const updatedQuizz = AccountStore.updateQuizz(manager.id, quizzId, quizz)
+      socket.emit("manager:quizzUpdated", updatedQuizz)
+      socket.emit("manager:quizzList", AccountStore.listQuizzes(manager.id))
+    } catch (error) {
+      socket.emit(
+        "manager:errorMessage",
+        error instanceof Error ? error.message : "Failed to update quiz",
+      )
+    }
+  })
+
+  socket.on("manager:deleteQuizz", ({ quizzId }) => {
+    const manager = requireAuthenticatedManager(socket)
+
+    if (!manager) {
+      return
+    }
+
+    try {
+      AccountStore.deleteQuizz(manager.id, quizzId)
+      socket.emit("manager:quizzDeleted", quizzId)
+      socket.emit("manager:quizzList", AccountStore.listQuizzes(manager.id))
+    } catch (error) {
+      socket.emit(
+        "manager:errorMessage",
+        error instanceof Error ? error.message : "Failed to delete quiz",
+      )
+    }
+  })
+
+  socket.on("manager:updateSettings", (settings) => {
+    const manager = requireAuthenticatedManager(socket)
+
+    if (!manager) {
+      return
+    }
+
+    try {
+      const nextSettings = AccountStore.updateManagerSettings(manager.id, settings)
+      socket.emit("manager:settings", nextSettings)
+    } catch (error) {
+      socket.emit(
+        "manager:errorMessage",
+        error instanceof Error ? error.message : "Failed to update settings",
+      )
+    }
+  })
+
+  socket.on("manager:uploadMedia", ({ filename, content }) => {
+    const manager = requireAuthenticatedManager(socket)
+
+    if (!manager) {
+      return
+    }
+
+    try {
+      const url = Config.uploadMedia(filename, content)
+      socket.emit("manager:mediaUploaded", { url })
+    } catch (error) {
+      socket.emit(
+        "manager:errorMessage",
+        error instanceof Error ? error.message : "Failed to upload audio file",
+      )
+    }
+  })
+
+  socket.on("manager:downloadHistory", ({ runId }) => {
+    const manager = requireAuthenticatedManager(socket)
+
+    if (!manager) {
+      return
+    }
+
+    try {
+      socket.emit(
+        "manager:historyExportReady",
+        History.exportCsv(manager.id, runId),
+      )
+    } catch (error) {
+      socket.emit(
+        "manager:errorMessage",
+        error instanceof Error ? error.message : "Failed to export history",
+      )
+    }
+  })
+
+  socket.on("manager:reconnect", ({ gameId }) => {
+    const manager = requireAuthenticatedManager(socket)
+
+    if (!manager) {
+      socket.emit("game:reset", "Manager authentication required")
+
+      return
+    }
+
+    const game = registry.getGameById(gameId)
+
+    if (!game || !game.isOwnedByManager(manager.id)) {
+      socket.emit("game:reset", "Game expired")
+
+      return
+    }
+
+    game.reconnect(socket)
+  })
+
+  socket.on("manager:takeOverGame", ({ gameId }) => {
+    const manager = requireAuthenticatedManager(socket)
+
+    if (!manager) {
+      return
+    }
+
+    const game = registry.getGameById(gameId)
+
+    if (!game || !game.isOwnedByManager(manager.id)) {
+      socket.emit("manager:errorMessage", "Game not found")
+
+      return
+    }
+
+    game.takeOverManager(socket)
+    socket.emit(
+      "manager:activeGame",
+      game.getActiveManagerGame(getSocketClientId(socket)),
+    )
+  })
 
   socket.on("player:reconnect", ({ gameId }) => {
     const game = registry.getPlayerGame(gameId, socket.handshake.auth.clientId)
@@ -133,205 +550,10 @@ io.on("connection", (socket) => {
     socket.emit("game:reset", "Game not found")
   })
 
-  socket.on("manager:reconnect", ({ gameId }) => {
-    if (!ensureAuthenticatedManager(socket)) {
-      socket.emit("game:reset", "Manager authentication required")
-
-      return
-    }
-
-    const game = registry.getManagerGame(gameId, socket.handshake.auth.clientId)
-
-    if (game) {
-      game.reconnect(socket)
-
-      return
-    }
-
-    socket.emit("game:reset", "Game expired")
-  })
-
-  socket.on("manager:auth", (password) => {
-    try {
-      const config = Config.game()
-
-      if (config.managerPassword === "PASSWORD") {
-        socket.emit("manager:errorMessage", "Manager password is not configured")
-
-        return
-      }
-
-      if (password !== config.managerPassword) {
-        socket.emit("manager:errorMessage", "Invalid password")
-
-        return
-      }
-
-      authenticatedManagers.add(getSocketClientId(socket))
-      emitManagerDashboard(socket)
-    } catch (error) {
-      console.error("Failed to read game config:", error)
-      socket.emit("manager:errorMessage", "Failed to read game config")
-    }
-  })
-
-  socket.on("manager:getDashboard", () => {
-    if (!ensureAuthenticatedManager(socket)) {
-      socket.emit("manager:errorMessage", "Manager authentication required")
-
-      return
-    }
-
-    emitManagerDashboard(socket)
-  })
-
-  socket.on("manager:logout", () => {
-    const clientId = getSocketClientId(socket)
-
-    authenticatedManagers.delete(clientId)
-    revokeManagerGamesForClient(clientId)
-  })
-
-  socket.on("game:create", (quizzId) => {
-    if (!ensureAuthenticatedManager(socket)) {
-      socket.emit("manager:errorMessage", "Manager authentication required")
-
-      return
-    }
-
-    const quizzList = Config.quizz()
-    const quizz = quizzList.find((q) => q.id === quizzId)
-
-    if (!quizz) {
-      socket.emit("game:errorMessage", "Quiz not found")
-
-      return
-    }
-
-    const game = new Game(io, socket, quizz)
-    registry.addGame(game)
-  })
-
-  socket.on("manager:createQuizz", ({ subject }) => {
-    if (!ensureAuthenticatedManager(socket)) {
-      socket.emit("manager:errorMessage", "Manager authentication required")
-
-      return
-    }
-
-    try {
-      const quizz = Config.createQuizz(subject)
-      socket.emit("manager:quizzCreated", quizz)
-      socket.emit("manager:quizzList", Config.quizz())
-    } catch (error) {
-      console.error("Failed to create quizz:", error)
-      socket.emit(
-        "manager:errorMessage",
-        error instanceof Error ? error.message : "Failed to create quiz",
-      )
-    }
-  })
-
-  socket.on("manager:updateQuizz", ({ quizzId, quizz }) => {
-    if (!ensureAuthenticatedManager(socket)) {
-      socket.emit("manager:errorMessage", "Manager authentication required")
-
-      return
-    }
-
-    try {
-      const updatedQuizz = Config.updateQuizz(quizzId, quizz)
-      socket.emit("manager:quizzUpdated", updatedQuizz)
-      socket.emit("manager:quizzList", Config.quizz())
-    } catch (error) {
-      console.error("Failed to update quizz:", error)
-      socket.emit(
-        "manager:errorMessage",
-        error instanceof Error ? error.message : "Failed to update quiz",
-      )
-    }
-  })
-
-  socket.on("manager:deleteQuizz", ({ quizzId }) => {
-    if (!ensureAuthenticatedManager(socket)) {
-      socket.emit("manager:errorMessage", "Manager authentication required")
-
-      return
-    }
-
-    try {
-      Config.deleteQuizz(quizzId)
-      socket.emit("manager:quizzDeleted", quizzId)
-      socket.emit("manager:quizzList", Config.quizz())
-    } catch (error) {
-      console.error("Failed to delete quizz:", error)
-      socket.emit(
-        "manager:errorMessage",
-        error instanceof Error ? error.message : "Failed to delete quiz",
-      )
-    }
-  })
-
-  socket.on("manager:updateSettings", (settings) => {
-    if (!ensureAuthenticatedManager(socket)) {
-      socket.emit("manager:errorMessage", "Manager authentication required")
-
-      return
-    }
-
-    try {
-      const nextSettings = Config.updateManagerSettings(settings)
-      socket.emit("manager:settings", nextSettings)
-    } catch (error) {
-      console.error("Failed to update manager settings:", error)
-      socket.emit(
-        "manager:errorMessage",
-        error instanceof Error ? error.message : "Failed to update settings",
-      )
-    }
-  })
-
-  socket.on("manager:uploadMedia", ({ filename, content }) => {
-    if (!ensureAuthenticatedManager(socket)) {
-      socket.emit("manager:errorMessage", "Manager authentication required")
-
-      return
-    }
-
-    try {
-      const url = Config.uploadMedia(filename, content)
-      socket.emit("manager:mediaUploaded", { url })
-    } catch (error) {
-      console.error("Failed to upload media:", error)
-      socket.emit(
-        "manager:errorMessage",
-        error instanceof Error ? error.message : "Failed to upload audio file",
-      )
-    }
-  })
-
-  socket.on("manager:downloadHistory", ({ runId }) => {
-    if (!ensureAuthenticatedManager(socket)) {
-      socket.emit("manager:errorMessage", "Manager authentication required")
-
-      return
-    }
-
-    try {
-      socket.emit("manager:historyExportReady", History.exportCsv(runId))
-    } catch (error) {
-      console.error("Failed to export history:", error)
-      socket.emit(
-        "manager:errorMessage",
-        error instanceof Error ? error.message : "Failed to export history",
-      )
-    }
-  })
-
   socket.on("player:join", (inviteCode) => {
     const result = inviteCodeValidator.safeParse(inviteCode)
 
-    if (result.error) {
+    if (!result.success) {
       socket.emit("game:errorMessage", result.error.issues[0].message)
 
       return
@@ -379,7 +601,15 @@ io.on("connection", (socket) => {
   )
 
   socket.on("manager:endGame", ({ gameId }) =>
-    withGame(gameId, socket, (game) => game.endGame(socket)),
+    withGame(gameId, socket, (game) => {
+      game.endGame(socket)
+
+      const manager = getAuthenticatedManager(socket)
+
+      if (manager) {
+        socket.emit("manager:activeGame", null)
+      }
+    }),
   )
 
   socket.on("disconnect", () => {
@@ -408,7 +638,7 @@ io.on("connection", (socket) => {
       return
     }
 
-    const player = game.players.find((p) => p.id === socket.id)
+    const player = game.players.find((item) => item.id === socket.id)
 
     if (!player) {
       return
@@ -440,4 +670,3 @@ process.on("SIGTERM", () => {
   Registry.getInstance().cleanup()
   process.exit(0)
 })
-

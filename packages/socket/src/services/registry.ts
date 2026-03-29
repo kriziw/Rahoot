@@ -50,6 +50,10 @@ class Registry {
     )
   }
 
+  getGameByManagerAccountId(managerId: string): Game | undefined {
+    return this.games.find((g) => g.manager.accountId === managerId)
+  }
+
   getGameByManagerSocketId(socketId: string): Game | undefined {
     return this.games.find((g) => g.manager.id === socketId)
   }

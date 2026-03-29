@@ -4,14 +4,18 @@ import Input from "@mindbuzz/web/features/game/components/Input"
 import { type KeyboardEvent, useState } from "react"
 
 type Props = {
-  onSubmit: (_password: string) => void
+  onSubmit: (_credentials: { username: string; password: string }) => void
 }
 
 const ManagerPassword = ({ onSubmit }: Props) => {
+  const [username, setUsername] = useState("")
   const [password, setPassword] = useState("")
 
   const handleSubmit = () => {
-    onSubmit(password)
+    onSubmit({
+      username,
+      password,
+    })
   }
 
   const handleKeyDown = (event: KeyboardEvent) => {
@@ -23,12 +27,20 @@ const ManagerPassword = ({ onSubmit }: Props) => {
   return (
     <Form>
       <Input
+        type="text"
+        value={username}
+        onChange={(e) => setUsername(e.target.value)}
+        onKeyDown={handleKeyDown}
+        placeholder="Username"
+      />
+      <Input
         type="password"
+        value={password}
         onChange={(e) => setPassword(e.target.value)}
         onKeyDown={handleKeyDown}
-        placeholder="Manager password"
+        placeholder="Password"
       />
-      <Button onClick={handleSubmit}>Submit</Button>
+      <Button onClick={handleSubmit}>Sign in</Button>
     </Form>
   )
 }

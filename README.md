@@ -25,11 +25,15 @@ The original project is a great lightweight self-hosted Kahoot-style game. This 
 
 - Manager dashboard with quiz creation, editing, deletion, and launch
 - In-browser quiz editor for question text, answers, single or multiple correct answers, timers, and optional media
+- SQLite-backed manager accounts with `admin` and `manager` roles
+- First-run bootstrap flow for creating the initial admin account
 - SQLite-backed run history for completed games
 - CSV export for the current run and retrospective exports from history
-- Manager settings for password updates and default fallback audio
+- Per-manager settings and password management
+- Admin-only manager account management for creating, disabling, and resetting manager accounts
 - Support for remote audio URLs and local audio uploads stored in `media/`
 - Improved manager session persistence and explicit logout flow
+- One active game per manager account with explicit take over from another session
 - Better mobile reconnect recovery for players after app switching or screen lock
 - Published Docker image and release automation for easier deployments
 
@@ -37,8 +41,7 @@ The original project is a great lightweight self-hosted Kahoot-style game. This 
 
 - Self-hosted multiplayer quiz sessions
 - Host / manager interface plus player join flow by room code
-- Quiz definitions stored as JSON in `config/quizz/`
-- Detailed completed-run history stored in SQLite at `config/history.db`
+- Manager-owned quizzes, settings, and history stored in SQLite at `config/history.db`
 - Optional image, video, and audio per question
 - Global fallback audio when a question does not define its own audio
 - Docker-first deployment with persistent config and media volumes
@@ -73,8 +76,8 @@ It mounts:
 
 Those folders persist:
 
-- manager configuration
-- quiz JSON files
+- the main SQLite application database
+- legacy migration files in `config/`
 - quiz run history
 - uploaded local media
 
@@ -120,19 +123,36 @@ docker run -d \
 ## How To Use
 
 1. Open [http://localhost:3000/manager](http://localhost:3000/manager)
-2. Sign in with the manager password from `config/game.json`
-3. Create, edit, delete, or launch a quiz
-4. Share the main app URL and room code with players
-5. Run the quiz
-6. Download current results or revisit them later from the history view
+2. On a fresh install, create the initial admin account
+3. Sign in with your manager account
+4. Create, edit, delete, or launch a quiz
+5. Share the main app URL and room code with players
+6. Run the quiz
+7. Download current results or revisit them later from the history view
 
 ## Data Layout
 
 MindBuzz stores its runtime data in a few simple locations.
 
+### `config/history.db`
+
+This SQLite database stores:
+
+- manager accounts
+- per-manager settings
+- quizzes
+- completed quiz runs
+
+Fresh installs create the initial admin account through the `/manager` setup flow.
+
+Existing installs are automatically migrated on first startup after upgrade:
+
+- the legacy manager password becomes the `admin` account password
+- existing quizzes, history, and settings are assigned to that `admin` account
+
 ### `config/game.json`
 
-Main manager settings:
+Legacy migration source:
 
 ```json
 {
@@ -143,12 +163,12 @@ Main manager settings:
 
 Fields:
 
-- `managerPassword`: required for manager login
-- `defaultAudio`: optional fallback audio used when a question does not define `audio`
+- `managerPassword`: used only for one-time migration from older installs
+- `defaultAudio`: legacy fallback audio value imported into the first migrated admin account
 
 ### `config/quizz/*.json`
 
-Quiz definitions live in `config/quizz/`.
+Legacy quiz definitions live in `config/quizz/`.
 
 Example:
 
@@ -179,10 +199,6 @@ Question fields:
 - `cooldown`: delay before answers are shown
 - `time`: answer timer in seconds
 
-### `config/history.db`
-
-Completed quiz runs are stored in SQLite. The manager UI uses this history to list past runs and export detailed CSV results.
-
 ### `media/`
 
 Manager-uploaded local audio files are stored here and served by the app at `/media/<filename>`.
@@ -192,14 +208,17 @@ Manager-uploaded local audio files are stored here and served by the app at `/me
 The manager UI now covers much more than starting a game:
 
 - authenticate into the admin dashboard
+- create the initial admin account on a fresh install
 - create new quizzes
 - edit existing quizzes from the browser
 - delete quizzes
 - launch quiz sessions
 - review historic runs
 - export detailed CSV results
-- update the manager password
+- update the current account password
 - set a default audio track by URL or upload a local file
+- see the current active game and take over control from another session if needed
+- create and manage non-admin manager accounts when signed in as an admin
 
 ## Releases
 

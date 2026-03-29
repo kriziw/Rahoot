@@ -30,12 +30,33 @@ export type Quizz = {
 
 export type QuizzWithId = Quizz & { id: string }
 
+export type ManagerRole = "admin" | "manager"
+
+export type ManagerAccount = {
+  id: string
+  username: string
+  role: ManagerRole
+  disabledAt: string | null
+  createdAt: string
+  updatedAt: string
+}
+
+export type ManagerSession = Pick<ManagerAccount, "id" | "username" | "role">
+
+export type ActiveManagerGame = {
+  gameId: string
+  inviteCode: string
+  subject: string
+  started: boolean
+  controlledByCurrentSession: boolean
+}
+
 export type ManagerSettings = {
   defaultAudio?: string
 }
 
 export type ManagerSettingsUpdate = {
-  managerPassword?: string
+  password?: string
   defaultAudio?: string | null
 }
 
