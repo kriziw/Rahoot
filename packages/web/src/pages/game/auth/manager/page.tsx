@@ -1,17 +1,22 @@
 import type {
+  ActiveManagerGame,
+  ManagerAccount,
+  ManagerSession,
   ManagerSettings,
   ManagerSettingsUpdate,
   Quizz,
   QuizzWithId,
   QuizRunHistorySummary,
 } from "@mindbuzz/common/types/game"
+import { STATUS } from "@mindbuzz/common/types/game/status"
 import background from "@mindbuzz/web/assets/background.webp"
 import logo from "@mindbuzz/web/assets/logo.svg"
 import Button from "@mindbuzz/web/features/game/components/Button"
 import HistoryPanel from "@mindbuzz/web/features/game/components/create/HistoryPanel"
-import QuizzEditor from "@mindbuzz/web/features/game/components/create/QuizzEditor"
-import { STATUS } from "@mindbuzz/common/types/game/status"
+import InitialAdminSetup from "@mindbuzz/web/features/game/components/create/InitialAdminSetup"
+import ManagersPanel from "@mindbuzz/web/features/game/components/create/ManagersPanel"
 import ManagerPassword from "@mindbuzz/web/features/game/components/create/ManagerPassword"
+import QuizzEditor from "@mindbuzz/web/features/game/components/create/QuizzEditor"
 import SelectQuizz from "@mindbuzz/web/features/game/components/create/SelectQuizz"
 import SettingsPanel from "@mindbuzz/web/features/game/components/create/SettingsPanel"
 import {
@@ -19,10 +24,11 @@ import {
   useSocket,
 } from "@mindbuzz/web/features/game/contexts/socketProvider"
 import { useManagerStore } from "@mindbuzz/web/features/game/stores/manager"
+import { useQuestionStore } from "@mindbuzz/web/features/game/stores/question"
 import clsx from "clsx"
-import { useEffect, useState } from "react"
-import { useNavigate } from "react-router"
+import { useEffect, useMemo, useState } from "react"
 import toast from "react-hot-toast"
+import { useNavigate } from "react-router"
 
 const downloadCsv = (filename: string, content: string) => {
   const blob = new Blob([content], { type: "text/csv;charset=utf-8;" })
@@ -35,13 +41,16 @@ const downloadCsv = (filename: string, content: string) => {
   window.URL.revokeObjectURL(url)
 }
 
-const TABS = [
+const BASE_TABS = [
   { id: "quizzes", label: "Quizzes" },
   { id: "history", label: "History" },
   { id: "settings", label: "Settings" },
 ] as const
 
-type ManagerTab = (typeof TABS)[number]["id"]
+const ADMIN_TAB = { id: "managers", label: "Managers" } as const
+
+type ManagerTab = (typeof BASE_TABS)[number]["id"] | typeof ADMIN_TAB["id"]
+
 const MANAGER_AUTH_STORAGE_KEY = "manager_auth"
 
 const readManagerAuth = () => {
@@ -65,43 +74,102 @@ const persistManagerAuth = (value: boolean) => {
 }
 
 const ManagerAuthPage = () => {
-  const { reset, setGameId, setStatus } = useManagerStore()
   const navigate = useNavigate()
   const { socket } = useSocket()
+  const { reset, setGameId, setPlayers, setStatus } = useManagerStore()
+  const { setQuestionStates } = useQuestionStore()
 
   const [isAuth, setIsAuth] = useState(readManagerAuth)
+  const [requiresSetup, setRequiresSetup] = useState<boolean | null>(null)
+  const [manager, setManager] = useState<ManagerSession | null>(null)
   const [activeTab, setActiveTab] = useState<ManagerTab>("quizzes")
   const [quizzList, setQuizzList] = useState<QuizzWithId[]>([])
   const [history, setHistory] = useState<QuizRunHistorySummary[]>([])
   const [settings, setSettings] = useState<ManagerSettings>({})
   const [editingQuizzId, setEditingQuizzId] = useState<string | null>(null)
   const [uploadedAudioUrl, setUploadedAudioUrl] = useState<string | null>(null)
+  const [managers, setManagers] = useState<ManagerAccount[]>([])
+  const [activeGame, setActiveGame] = useState<ActiveManagerGame | null>(null)
+  const hasAuthenticatedManager = isAuth && manager !== null
 
-  useEvent("manager:quizzList", (quizzList) => {
+  const tabs = useMemo(
+    () =>
+      manager?.role === "admin"
+        ? [...BASE_TABS, ADMIN_TAB]
+        : [...BASE_TABS],
+    [manager?.role],
+  )
+
+  useEvent("manager:bootstrapState", ({ requiresSetup }) => {
+    setRequiresSetup(requiresSetup)
+
+    if (requiresSetup) {
+      persistManagerAuth(false)
+      setIsAuth(false)
+      setManager(null)
+      setActiveGame(null)
+      return
+    }
+
+    if (!requiresSetup && readManagerAuth() && !manager) {
+      socket?.emit("manager:getDashboard")
+    }
+  })
+
+  useEvent("manager:authSuccess", ({ manager }) => {
     persistManagerAuth(true)
     setIsAuth(true)
-    setQuizzList(quizzList)
+    setManager(manager)
+    setRequiresSetup(false)
+
+    if (manager.role !== "admin" && activeTab === "managers") {
+      setActiveTab("quizzes")
+    }
   })
 
-  useEvent("manager:historyList", (history) => {
-    setHistory(history)
+  useEvent("manager:quizzList", (nextQuizzList) => {
+    setQuizzList(nextQuizzList)
   })
 
-  useEvent("manager:settings", (settings) => {
-    setSettings(settings)
+  useEvent("manager:historyList", (nextHistory) => {
+    setHistory(nextHistory)
+  })
+
+  useEvent("manager:settings", (nextSettings) => {
+    setSettings(nextSettings)
+  })
+
+  useEvent("manager:managersList", (nextManagers) => {
+    setManagers(nextManagers)
+  })
+
+  useEvent("manager:activeGame", (game) => {
+    setActiveGame(game)
+  })
+
+  useEvent("manager:managerCreated", () => {
+    toast.success("Manager created")
+  })
+
+  useEvent("manager:managerUpdated", () => {
+    toast.success("Manager updated")
   })
 
   useEvent("manager:errorMessage", (message) => {
     if (message === "Manager authentication required") {
       persistManagerAuth(false)
       setIsAuth(false)
+      setManager(null)
       setActiveTab("quizzes")
       setQuizzList([])
       setHistory([])
       setSettings({})
-      reset()
       setEditingQuizzId(null)
       setUploadedAudioUrl(null)
+      setManagers([])
+      setActiveGame(null)
+      reset()
+      setQuestionStates(null)
     }
 
     toast.error(message)
@@ -149,21 +217,37 @@ const ManagerAuthPage = () => {
     navigate(`/party/manager/${gameId}`)
   })
 
+  useEvent(
+    "manager:successReconnect",
+    ({ gameId, status, players, currentQuestion }) => {
+      setGameId(gameId)
+      setStatus(status.name, status.data)
+      setPlayers(players)
+      setQuestionStates(currentQuestion)
+      navigate(`/party/manager/${gameId}`)
+      toast.success("Game control restored")
+    },
+  )
+
   useEvent("connect", () => {
-    if (isAuth) {
-      socket?.emit("manager:getDashboard")
-    }
+    socket?.emit("manager:getBootstrapState")
   })
 
   useEffect(() => {
-    if (isAuth) {
-      socket?.emit("manager:getDashboard")
-    }
-  }, [isAuth, socket])
+    socket?.emit("manager:getBootstrapState")
+  }, [socket])
 
-  const handleAuth = (password: string) => {
-    socket?.emit("manager:auth", password)
+  const handleAuth = (credentials: { username: string; password: string }) => {
+    socket?.emit("manager:auth", credentials)
   }
+
+  const handleCreateInitialAdmin = (data: {
+    username: string
+    password: string
+  }) => {
+    socket?.emit("manager:createInitialAdmin", data)
+  }
+
   const handleCreate = (quizzId: string) => {
     socket?.emit("game:create", quizzId)
   }
@@ -188,10 +272,14 @@ const ManagerAuthPage = () => {
   const handleSelectTab = (tab: ManagerTab) => {
     setActiveTab(tab)
     setEditingQuizzId(null)
+
+    if (tab === "managers") {
+      socket?.emit("manager:listManagers")
+    }
   }
 
-  const handleSaveSettings = (settings: ManagerSettingsUpdate) => {
-    socket?.emit("manager:updateSettings", settings)
+  const handleSaveSettings = (nextSettings: ManagerSettingsUpdate) => {
+    socket?.emit("manager:updateSettings", nextSettings)
   }
 
   const handleUploadLocalAudio = (data: { filename: string; content: string }) => {
@@ -202,16 +290,52 @@ const ManagerAuthPage = () => {
     socket?.emit("manager:downloadHistory", { runId })
   }
 
+  const handleCreateManager = (data: { username: string; password: string }) => {
+    socket?.emit("manager:createManager", data)
+  }
+
+  const handleResetManagerPassword = (data: {
+    managerId: string
+    password: string
+  }) => {
+    socket?.emit("manager:resetManagerPassword", data)
+  }
+
+  const handleSetManagerDisabled = (data: {
+    managerId: string
+    disabled: boolean
+  }) => {
+    socket?.emit("manager:setManagerDisabled", data)
+  }
+
+  const handleResumeOrTakeOver = () => {
+    if (!activeGame) {
+      return
+    }
+
+    if (activeGame.controlledByCurrentSession) {
+      navigate(`/party/manager/${activeGame.gameId}`)
+
+      return
+    }
+
+    socket?.emit("manager:takeOverGame", { gameId: activeGame.gameId })
+  }
+
   const handleLogout = () => {
     persistManagerAuth(false)
     setIsAuth(false)
+    setManager(null)
     setActiveTab("quizzes")
     setQuizzList([])
     setHistory([])
     setSettings({})
     setEditingQuizzId(null)
     setUploadedAudioUrl(null)
+    setManagers([])
+    setActiveGame(null)
     reset()
+    setQuestionStates(null)
     socket?.emit("manager:logout")
     navigate("/manager")
   }
@@ -220,11 +344,36 @@ const ManagerAuthPage = () => {
 
   let content = null
 
-  if (!isAuth) {
+  if (requiresSetup === null) {
     content = (
       <div className="relative z-10 flex min-h-dvh w-full flex-col items-center justify-center px-4 py-6">
-        <img src={logo} className="mb-10 h-16" alt="logo" />
+        <img src={logo} className="mb-10 h-16" alt="MindBuzz logo" />
+        <div className="rounded-md bg-white px-6 py-4 text-sm text-gray-500 shadow-sm">
+          Loading manager panel...
+        </div>
+      </div>
+    )
+  } else if (!isAuth && requiresSetup) {
+    content = (
+      <div className="relative z-10 flex min-h-dvh w-full flex-col items-center justify-center px-4 py-6">
+        <img src={logo} className="mb-10 h-16" alt="MindBuzz logo" />
+        <InitialAdminSetup onSubmit={handleCreateInitialAdmin} />
+      </div>
+    )
+  } else if (!isAuth) {
+    content = (
+      <div className="relative z-10 flex min-h-dvh w-full flex-col items-center justify-center px-4 py-6">
+        <img src={logo} className="mb-10 h-16" alt="MindBuzz logo" />
         <ManagerPassword onSubmit={handleAuth} />
+      </div>
+    )
+  } else if (!hasAuthenticatedManager) {
+    content = (
+      <div className="relative z-10 flex min-h-dvh w-full flex-col items-center justify-center px-4 py-6">
+        <img src={logo} className="mb-10 h-16" alt="MindBuzz logo" />
+        <div className="rounded-md bg-white px-6 py-4 text-sm text-gray-500 shadow-sm">
+          Restoring manager session...
+        </div>
       </div>
     )
   } else if (editingQuizz) {
@@ -248,6 +397,14 @@ const ManagerAuthPage = () => {
           onSave={handleSaveSettings}
           onUploadLocalAudio={handleUploadLocalAudio}
         />
+      ) : activeTab === "managers" && manager?.role === "admin" ? (
+        <ManagersPanel
+          currentManagerId={manager.id}
+          managers={managers}
+          onCreate={handleCreateManager}
+          onResetPassword={handleResetManagerPassword}
+          onSetDisabled={handleSetManagerDisabled}
+        />
       ) : (
         <SelectQuizz
           quizzList={quizzList}
@@ -262,7 +419,7 @@ const ManagerAuthPage = () => {
       <div className="relative z-10 flex min-h-dvh flex-col items-center px-4 py-6">
         <div className="mb-4 flex w-full max-w-5xl flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
           <div className="flex flex-wrap gap-2">
-            {TABS.map((tab) => (
+            {tabs.map((tab) => (
               <Button
                 key={tab.id}
                 type="button"
@@ -279,14 +436,35 @@ const ManagerAuthPage = () => {
             ))}
           </div>
 
-          <Button
-            type="button"
-            className="self-start bg-white px-4 !text-black sm:self-auto"
-            onClick={handleLogout}
-          >
-            Logout
-          </Button>
+          <div className="flex flex-col items-start gap-2 sm:items-end">
+            <p className="text-sm font-semibold text-white">
+              Signed in as {manager?.username}
+            </p>
+            <Button
+              type="button"
+              className="bg-white px-4 !text-black"
+              onClick={handleLogout}
+            >
+              Logout
+            </Button>
+          </div>
         </div>
+
+        {activeGame && (
+          <div className="mb-4 flex w-full max-w-5xl flex-col gap-3 rounded-md bg-white/95 p-4 shadow-sm md:flex-row md:items-center md:justify-between">
+            <div>
+              <h2 className="text-lg font-bold">Active game</h2>
+              <p className="text-sm text-gray-600">
+                {activeGame.subject} | Invite code {activeGame.inviteCode} |{" "}
+                {activeGame.started ? "In progress" : "Waiting for players"}
+              </p>
+            </div>
+
+            <Button className="px-4" onClick={handleResumeOrTakeOver} type="button">
+              {activeGame.controlledByCurrentSession ? "Resume game" : "Take over game"}
+            </Button>
+          </div>
+        )}
 
         {dashboardContent}
       </div>
@@ -309,4 +487,3 @@ const ManagerAuthPage = () => {
 }
 
 export default ManagerAuthPage
-

@@ -2,16 +2,7 @@ import type {
   QuizRunHistoryDetail,
   QuizRunHistorySummary,
 } from "@mindbuzz/common/types/game"
-import fs from "fs"
-import { resolve } from "path"
-import { DatabaseSync } from "node:sqlite"
-
-const inContainerPath = process.env.CONFIG_PATH
-
-const getHistoryPath = () =>
-  inContainerPath
-    ? resolve(inContainerPath, "history.db")
-    : resolve(process.cwd(), "../../config", "history.db")
+import Database from "@mindbuzz/socket/services/database"
 
 const escapeCsv = (value: string | number | null) => {
   const normalized = value === null ? "" : String(value)
@@ -44,50 +35,16 @@ const normalizeRun = (
 })
 
 class History {
-  private static db: DatabaseSync | null = null
-
-  private static getDb() {
-    if (History.db) {
-      return History.db
-    }
-
-    const path = getHistoryPath()
-    const directory = resolve(path, "..")
-
-    if (!fs.existsSync(directory)) {
-      fs.mkdirSync(directory, { recursive: true })
-    }
-
-    const db = new DatabaseSync(path)
-    db.exec(`
-      CREATE TABLE IF NOT EXISTS quiz_runs (
-        id TEXT PRIMARY KEY,
-        game_id TEXT NOT NULL,
-        quizz_id TEXT NOT NULL,
-        subject TEXT NOT NULL,
-        started_at TEXT NOT NULL,
-        ended_at TEXT NOT NULL,
-        total_players INTEGER NOT NULL,
-        question_count INTEGER NOT NULL,
-        winner TEXT,
-        payload_json TEXT NOT NULL
-      ) STRICT
-    `)
-
-    History.db = db
-
-    return db
-  }
-
   static init() {
-    History.getDb()
+    Database.init()
   }
 
-  static addRun(run: QuizRunHistoryDetail) {
-    const db = History.getDb()
+  static addRun(managerId: string, run: QuizRunHistoryDetail) {
+    const db = Database.getDb()
     const statement = db.prepare(`
       INSERT OR REPLACE INTO quiz_runs (
         id,
+        manager_id,
         game_id,
         quizz_id,
         subject,
@@ -97,11 +54,12 @@ class History {
         question_count,
         winner,
         payload_json
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `)
 
     statement.run(
       run.id,
+      managerId,
       run.gameId,
       run.quizzId,
       run.subject,
@@ -114,8 +72,8 @@ class History {
     )
   }
 
-  static listRuns(): QuizRunHistorySummary[] {
-    const db = History.getDb()
+  static listRuns(managerId: string): QuizRunHistorySummary[] {
+    const db = Database.getDb()
     const statement = db.prepare(`
       SELECT
         id,
@@ -128,20 +86,35 @@ class History {
         question_count AS questionCount,
         winner
       FROM quiz_runs
+      WHERE manager_id = ?
       ORDER BY ended_at DESC
     `)
 
-    return statement.all() as QuizRunHistorySummary[]
+    return statement.all(managerId) as QuizRunHistorySummary[]
   }
 
-  static getRun(runId: string) {
-    const db = History.getDb()
+  static claimLegacyRuns(managerId: string) {
+    const db = Database.getDb()
+    const statement = db.prepare(`
+      UPDATE quiz_runs
+      SET manager_id = ?
+      WHERE manager_id IS NULL
+    `)
+
+    statement.run(managerId)
+  }
+
+  static getRun(managerId: string, runId: string) {
+    const db = Database.getDb()
     const statement = db.prepare(`
       SELECT payload_json AS payloadJson
       FROM quiz_runs
       WHERE id = ?
+        AND manager_id = ?
     `)
-    const result = statement.get(runId) as { payloadJson: string } | undefined
+    const result = statement.get(runId, managerId) as
+      | { payloadJson: string }
+      | undefined
 
     if (!result) {
       return null
@@ -152,8 +125,8 @@ class History {
     )
   }
 
-  static exportCsv(runId: string) {
-    const run = History.getRun(runId)
+  static exportCsv(managerId: string, runId: string) {
+    const run = History.getRun(managerId, runId)
 
     if (!run) {
       throw new Error("History entry not found")

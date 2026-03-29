@@ -44,7 +44,7 @@ const SettingsPanel = ({
   onSave,
   onUploadLocalAudio,
 }: Props) => {
-  const [managerPassword, setManagerPassword] = useState("")
+  const [password, setPassword] = useState("")
   const [audioSource, setAudioSource] = useState<"remote" | "local">(
     getAudioSource(settings.defaultAudio),
   )
@@ -97,10 +97,10 @@ const SettingsPanel = ({
       audioSource === "remote" ? remoteAudioUrl.trim() : localAudioUrl.trim()
 
     onSave({
-      managerPassword: managerPassword.trim() || undefined,
+      password: password.trim() || undefined,
       defaultAudio: nextAudio || null,
     })
-    setManagerPassword("")
+    setPassword("")
   }
 
   const currentAudio = audioSource === "remote" ? remoteAudioUrl : localAudioUrl
@@ -116,7 +116,7 @@ const SettingsPanel = ({
 
       <section className="rounded-md bg-gray-50 p-4">
         <div className="mb-3">
-          <h2 className="text-lg font-bold">Manager password</h2>
+          <h2 className="text-lg font-bold">Account password</h2>
           <p className="text-sm text-gray-500">
             Leave this blank if you do not want to change it.
           </p>
@@ -124,9 +124,9 @@ const SettingsPanel = ({
 
         <Input
           type="password"
-          value={managerPassword}
-          onChange={(event) => setManagerPassword(event.target.value)}
-          placeholder="New manager password"
+          value={password}
+          onChange={(event) => setPassword(event.target.value)}
+          placeholder="New password"
           className="w-full"
         />
       </section>

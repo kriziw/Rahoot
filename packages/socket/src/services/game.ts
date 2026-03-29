@@ -1,5 +1,8 @@
 import type {
+  ActiveManagerGame,
   Answer,
+  ManagerSession,
+  ManagerSettings,
   Player,
   QuizzWithId,
   QuizRunHistoryDetail,
@@ -8,7 +11,6 @@ import type { Server, Socket } from "@mindbuzz/common/types/game/socket"
 import { STATUS } from "@mindbuzz/common/types/game/status"
 import type { Status, StatusDataMap } from "@mindbuzz/common/types/game/status"
 import { usernameValidator } from "@mindbuzz/common/validators/auth"
-import Config from "@mindbuzz/socket/services/config"
 import History from "@mindbuzz/socket/services/history"
 import Registry from "@mindbuzz/socket/services/registry"
 import { createInviteCode, timeToPoint } from "@mindbuzz/socket/utils/game"
@@ -28,10 +30,13 @@ class Game {
   manager: {
     id: string
     clientId: string
+    accountId: string
+    username: string
     connected: boolean
   }
   inviteCode: string
   started: boolean
+  defaultAudio?: string
 
   lastBroadcastStatus: { name: Status; data: StatusDataMap[Status] } | null =
     null
@@ -61,7 +66,13 @@ class Game {
   historyQuestions: QuizRunHistoryDetail["questions"]
   pendingPlayerRemovals: Map<string, ReturnType<typeof setTimeout>>
 
-  constructor(io: Server, socket: Socket, quizz: QuizzWithId) {
+  constructor(
+    io: Server,
+    socket: Socket,
+    manager: ManagerSession,
+    quizz: QuizzWithId,
+    settings: ManagerSettings,
+  ) {
     if (!io) {
       throw new Error("Socket server not initialized")
     }
@@ -71,10 +82,13 @@ class Game {
     this.manager = {
       id: "",
       clientId: "",
+      accountId: "",
+      username: "",
       connected: false,
     }
     this.inviteCode = ""
     this.started = false
+    this.defaultAudio = settings.defaultAudio
 
     this.lastBroadcastStatus = null
     this.managerStatus = null
@@ -106,6 +120,8 @@ class Game {
     this.manager = {
       id: socket.id,
       clientId: socket.handshake.auth.clientId,
+      accountId: manager.id,
+      username: manager.username,
       connected: true,
     }
     this.quizz = quizz
@@ -205,26 +221,78 @@ class Game {
     this.io.to(this.gameId).emit("game:totalPlayers", this.players.length)
   }
 
-  reconnect(socket: Socket) {
-    const { clientId } = socket.handshake.auth
-    const isManager = this.manager.clientId === clientId
-
-    if (isManager) {
-      this.reconnectManager(socket)
-    } else {
-      this.reconnectPlayer(socket)
+  getActiveManagerGame(currentClientId: string): ActiveManagerGame {
+    return {
+      gameId: this.gameId,
+      inviteCode: this.inviteCode,
+      subject: this.quizz.subject,
+      started: this.started,
+      controlledByCurrentSession: this.manager.clientId === currentClientId,
     }
   }
 
+  isOwnedByManager(managerId: string) {
+    return this.manager.accountId === managerId
+  }
+
+  reconnect(socket: Socket) {
+    const reconnectingClientId = socket.handshake.auth.clientId
+
+    if (this.manager.clientId === reconnectingClientId) {
+      this.reconnectManager(socket)
+
+      return
+    }
+
+    const isPlayer = this.players.some(
+      (player) => player.clientId === reconnectingClientId,
+    )
+
+    if (isPlayer) {
+      this.reconnectPlayer(socket)
+
+      return
+    }
+
+    this.reconnectManager(socket)
+  }
+
   private reconnectManager(socket: Socket) {
+    if (this.manager.clientId !== socket.handshake.auth.clientId) {
+      socket.emit("game:reset", "Game is controlled from another session")
+
+      return
+    }
+
     if (this.manager.connected) {
       socket.emit("game:reset", "Manager already connected")
 
       return
     }
 
+    this.activateManagerControl(socket)
+    registry.reactivateGame(this.gameId)
+    console.log(`Manager reconnected to game ${this.inviteCode}`)
+  }
+
+  takeOverManager(socket: Socket) {
+    const activeManagerSocketId = this.manager.id
+
+    if (activeManagerSocketId && activeManagerSocketId !== socket.id) {
+      this.io
+        .to(activeManagerSocketId)
+        .emit("game:reset", "Game taken over from another session")
+      this.io.in(activeManagerSocketId).socketsLeave(this.gameId)
+    }
+
+    this.activateManagerControl(socket)
+    registry.reactivateGame(this.gameId)
+  }
+
+  private activateManagerControl(socket: Socket) {
     socket.join(this.gameId)
     this.manager.id = socket.id
+    this.manager.clientId = socket.handshake.auth.clientId
     this.manager.connected = true
 
     const status = this.managerStatus ||
@@ -243,9 +311,6 @@ class Game {
       players: this.players,
     })
     socket.emit("game:totalPlayers", this.players.length)
-
-    registry.reactivateGame(this.gameId)
-    console.log(`Manager reconnected to game ${this.inviteCode}`)
   }
 
   private reconnectPlayer(socket: Socket) {
@@ -366,7 +431,6 @@ class Game {
 
   async newRound() {
     const question = this.quizz.questions[this.round.currentQuestion]
-    const defaultAudio = Config.managerSettings().defaultAudio
 
     if (!this.started) {
       return
@@ -411,7 +475,7 @@ class Game {
       multipleCorrect: question.solutions.length > 1,
       image: question.image,
       video: question.video,
-      audio: question.audio ?? defaultAudio,
+      audio: question.audio ?? this.defaultAudio,
       time: question.time,
       totalPlayer: this.players.length,
     })
@@ -620,11 +684,16 @@ class Game {
       return
     }
 
+    this.terminate("Quiz ended by manager")
+  }
+
+  terminate(reason: string) {
     this.abortCooldown()
     this.started = false
     this.clearPendingPlayerRemovals()
+    this.revokeManagerControl(reason)
 
-    this.io.to(this.gameId).emit("game:reset", "Quiz ended by manager")
+    this.io.to(this.gameId).emit("game:reset", reason)
     registry.removeGame(this.gameId)
   }
 
@@ -720,7 +789,7 @@ class Game {
     const runId = uuid()
     const endedAt = new Date().toISOString()
 
-    History.addRun({
+    History.addRun(this.manager.accountId, {
       id: runId,
       gameId: this.gameId,
       quizzId: this.quizz.id,
