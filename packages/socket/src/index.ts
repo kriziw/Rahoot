@@ -457,6 +457,25 @@ io.on("connection", (socket) => {
     }
   })
 
+  socket.on("manager:testOidcConfig", (settings) => {
+    const manager = requireAdminManager(socket)
+
+    if (!manager) {
+      return
+    }
+
+    OidcAuth.testConfiguration(settings)
+      .then((result) => {
+        socket.emit("manager:oidcConfigTested", result)
+      })
+      .catch((error) => {
+        socket.emit(
+          "manager:errorMessage",
+          error instanceof Error ? error.message : "Failed to test SSO settings",
+        )
+      })
+  })
+
   socket.on("manager:createManager", ({ username, password }) => {
     const manager = requireAdminManager(socket)
 

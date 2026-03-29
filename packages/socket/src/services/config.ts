@@ -240,6 +240,62 @@ class Config {
     return clientSecret || undefined
   }
 
+  private static buildStoredOidcConfig(settings: OidcConfigInput) {
+    const currentConfig = Config.authConfig().oidc
+    const nextClientSecret =
+      settings.clearClientSecret === true
+        ? ""
+        : settings.clientSecret !== undefined
+          ? settings.clientSecret.trim()
+          : currentConfig.clientSecret
+
+    return Config.normalizeStoredOidcConfig({
+      ...currentConfig,
+      enabled: settings.enabled,
+      autoProvisionEnabled: settings.autoProvisionEnabled,
+      discoveryUrl: settings.discoveryUrl,
+      clientId: settings.clientId,
+      clientSecret: nextClientSecret,
+      scopes: settings.scopes,
+      roleClaimPath: settings.roleClaimPath,
+      adminRoleValues: settings.adminRoleValues,
+      managerRoleValues: settings.managerRoleValues,
+    })
+  }
+
+  private static validateStoredOidcConfig(
+    config: StoredOidcConfig,
+    options: {
+      requireClientSecret: boolean
+      errorPrefix: string
+    },
+  ) {
+    if (!config.discoveryUrl) {
+      throw new Error(`Discovery URL is required ${options.errorPrefix}`)
+    }
+
+    if (!config.clientId) {
+      throw new Error(`Client ID is required ${options.errorPrefix}`)
+    }
+
+    if (options.requireClientSecret && !config.clientSecret) {
+      throw new Error(`Client secret is required ${options.errorPrefix}`)
+    }
+
+    if (!config.roleClaimPath) {
+      throw new Error(`Role claim path is required ${options.errorPrefix}`)
+    }
+
+    if (
+      config.adminRoleValues.length === 0 &&
+      config.managerRoleValues.length === 0
+    ) {
+      throw new Error(
+        `Configure at least one admin or manager role value ${options.errorPrefix}`,
+      )
+    }
+  }
+
   static oidcStatus(): OidcStatus {
     const config = Config.authConfig().oidc
     const configured = Boolean(
@@ -253,6 +309,27 @@ class Config {
     return {
       enabled: config.enabled,
       configured,
+    }
+  }
+
+  static validateTestableOidcConfig(settings: OidcConfigInput) {
+    const nextConfig = Config.buildStoredOidcConfig(settings)
+
+    Config.validateStoredOidcConfig(nextConfig, {
+      requireClientSecret: false,
+      errorPrefix: "to test SSO settings",
+    })
+
+    return {
+      enabled: nextConfig.enabled,
+      autoProvisionEnabled: nextConfig.autoProvisionEnabled,
+      discoveryUrl: nextConfig.discoveryUrl,
+      clientId: nextConfig.clientId,
+      hasClientSecret: Boolean(nextConfig.clientSecret),
+      scopes: [...nextConfig.scopes],
+      roleClaimPath: nextConfig.roleClaimPath,
+      adminRoleValues: [...nextConfig.adminRoleValues],
+      managerRoleValues: [...nextConfig.managerRoleValues],
     }
   }
 
@@ -418,53 +495,15 @@ class Config {
   }
 
   static updateOidc(settings: OidcConfigInput) {
-    const currentConfig = Config.authConfig().oidc
-    const nextClientSecret =
-      settings.clearClientSecret === true
-        ? ""
-        : settings.clientSecret !== undefined
-          ? settings.clientSecret.trim()
-          : currentConfig.clientSecret
     const nextConfig: AuthConfig = {
-      oidc: Config.normalizeStoredOidcConfig({
-        ...currentConfig,
-        enabled: settings.enabled,
-        autoProvisionEnabled: settings.autoProvisionEnabled,
-        discoveryUrl: settings.discoveryUrl,
-        clientId: settings.clientId,
-        clientSecret: nextClientSecret,
-        scopes: settings.scopes,
-        roleClaimPath: settings.roleClaimPath,
-        adminRoleValues: settings.adminRoleValues,
-        managerRoleValues: settings.managerRoleValues,
-      }),
+      oidc: Config.buildStoredOidcConfig(settings),
     }
 
     if (nextConfig.oidc.enabled) {
-      if (!nextConfig.oidc.discoveryUrl) {
-        throw new Error("Discovery URL is required when SSO is enabled")
-      }
-
-      if (!nextConfig.oidc.clientId) {
-        throw new Error("Client ID is required when SSO is enabled")
-      }
-
-      if (!nextConfig.oidc.clientSecret) {
-        throw new Error("Client secret is required when SSO is enabled")
-      }
-
-      if (!nextConfig.oidc.roleClaimPath) {
-        throw new Error("Role claim path is required when SSO is enabled")
-      }
-
-      if (
-        nextConfig.oidc.adminRoleValues.length === 0 &&
-        nextConfig.oidc.managerRoleValues.length === 0
-      ) {
-        throw new Error(
-          "Configure at least one admin or manager role value when SSO is enabled",
-        )
-      }
+      Config.validateStoredOidcConfig(nextConfig.oidc, {
+        requireClientSecret: true,
+        errorPrefix: "when SSO is enabled",
+      })
     }
 
     Config.writeAuthConfig(nextConfig)

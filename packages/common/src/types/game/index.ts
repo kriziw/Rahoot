@@ -85,6 +85,13 @@ export type OidcStatus = {
   configured: boolean
 }
 
+export type OidcConfigTestResult = {
+  issuer: string
+  authorizationEndpoint: string
+  tokenEndpoint: string
+  userinfoEndpoint?: string
+}
+
 export type ManagerOidcIdentity = {
   id: string
   managerId: string
