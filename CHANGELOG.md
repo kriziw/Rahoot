@@ -1,5 +1,13 @@
 # Changelog
 
+## [1.9.0](https://github.com/kriziw/MindBuzz/compare/v1.8.1...v1.9.0) (2026-03-29)
+
+
+### Features
+
+* add oidc config and identity foundation ([894c036](https://github.com/kriziw/MindBuzz/commit/894c0368cc604f96340a0b36d75c4f15051ee0fd))
+* add oidc config and identity foundation ([27efe06](https://github.com/kriziw/MindBuzz/commit/27efe06215996b9df00596567277143dfa841419))
+
 ## [1.8.1](https://github.com/kriziw/MindBuzz/compare/v1.8.0...v1.8.1) (2026-03-29)
 
 
