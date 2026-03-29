@@ -1,6 +1,9 @@
 import type {
   ManagerSettings,
   ManagerSettingsUpdate,
+  OidcConfig,
+  OidcConfigInput,
+  OidcStatus,
   Quizz,
   QuizzWithId,
 } from "@mindbuzz/common/types/game"
@@ -24,6 +27,32 @@ const getMediaPath = (path: string = "") =>
     ? resolve(inContainerPath, "..", "media", path)
     : resolve(process.cwd(), "../../media", path)
 
+type StoredOidcConfig = Omit<OidcConfig, "hasClientSecret"> & {
+  clientSecret: string
+}
+
+type AuthConfig = {
+  oidc: StoredOidcConfig
+}
+
+const DEFAULT_OIDC_SCOPES = ["openid", "profile", "email"]
+
+const DEFAULT_STORED_OIDC_CONFIG: StoredOidcConfig = {
+  enabled: false,
+  autoProvisionEnabled: false,
+  discoveryUrl: "",
+  clientId: "",
+  clientSecret: "",
+  scopes: DEFAULT_OIDC_SCOPES,
+  roleClaimPath: "groups",
+  adminRoleValues: ["mindbuzz-admin"],
+  managerRoleValues: ["mindbuzz-manager"],
+}
+
+const DEFAULT_AUTH_CONFIG: AuthConfig = {
+  oidc: DEFAULT_STORED_OIDC_CONFIG,
+}
+
 class Config {
   static quizzDirectory() {
     return getPath("quizz")
@@ -31,6 +60,60 @@ class Config {
 
   static mediaDirectory() {
     return getMediaPath()
+  }
+
+  static authConfigPath() {
+    return getPath("auth.json")
+  }
+
+  private static normalizeStringList(values: string[] | undefined, fallback: string[]) {
+    const normalized = (values ?? [])
+      .map((value) => value.trim())
+      .filter(Boolean)
+
+    return normalized.length > 0 ? [...new Set(normalized)] : [...fallback]
+  }
+
+  private static normalizeStoredOidcConfig(
+    config: Partial<StoredOidcConfig> | undefined,
+  ): StoredOidcConfig {
+    return {
+      enabled: config?.enabled === true,
+      autoProvisionEnabled: config?.autoProvisionEnabled === true,
+      discoveryUrl: config?.discoveryUrl?.trim() ?? "",
+      clientId: config?.clientId?.trim() ?? "",
+      clientSecret: config?.clientSecret?.trim() ?? "",
+      scopes: Config.normalizeStringList(config?.scopes, DEFAULT_OIDC_SCOPES),
+      roleClaimPath: config?.roleClaimPath?.trim() ?? "",
+      adminRoleValues: Config.normalizeStringList(config?.adminRoleValues, []),
+      managerRoleValues: Config.normalizeStringList(config?.managerRoleValues, []),
+    }
+  }
+
+  private static authConfig(): AuthConfig {
+    const authConfigPath = Config.authConfigPath()
+
+    if (!fs.existsSync(authConfigPath)) {
+      return DEFAULT_AUTH_CONFIG
+    }
+
+    try {
+      const config = JSON.parse(
+        fs.readFileSync(authConfigPath, "utf-8"),
+      ) as Partial<AuthConfig>
+
+      return {
+        oidc: Config.normalizeStoredOidcConfig(config.oidc),
+      }
+    } catch (error) {
+      console.error("Failed to read auth config:", error)
+    }
+
+    return DEFAULT_AUTH_CONFIG
+  }
+
+  private static writeAuthConfig(config: AuthConfig) {
+    fs.writeFileSync(Config.authConfigPath(), JSON.stringify(config, null, 2))
   }
 
   static init() {
@@ -53,6 +136,12 @@ class Config {
           2,
         ),
       )
+    }
+
+    const isAuthConfigExists = fs.existsSync(Config.authConfigPath())
+
+    if (!isAuthConfigExists) {
+      Config.writeAuthConfig(DEFAULT_AUTH_CONFIG)
     }
 
     const isQuizzExists = fs.existsSync(getPath("quizz"))
@@ -125,6 +214,44 @@ class Config {
 
     return {
       defaultAudio: normalizeOptionalAsset(config.defaultAudio),
+    }
+  }
+
+  static oidc(): OidcConfig {
+    const config = Config.authConfig().oidc
+
+    return {
+      enabled: config.enabled,
+      autoProvisionEnabled: config.autoProvisionEnabled,
+      discoveryUrl: config.discoveryUrl,
+      clientId: config.clientId,
+      hasClientSecret: Boolean(config.clientSecret),
+      scopes: [...config.scopes],
+      roleClaimPath: config.roleClaimPath,
+      adminRoleValues: [...config.adminRoleValues],
+      managerRoleValues: [...config.managerRoleValues],
+    }
+  }
+
+  static oidcSecret() {
+    const clientSecret = Config.authConfig().oidc.clientSecret
+
+    return clientSecret || undefined
+  }
+
+  static oidcStatus(): OidcStatus {
+    const config = Config.authConfig().oidc
+    const configured = Boolean(
+      config.discoveryUrl &&
+        config.clientId &&
+        config.clientSecret &&
+        config.roleClaimPath &&
+        (config.adminRoleValues.length > 0 || config.managerRoleValues.length > 0),
+    )
+
+    return {
+      enabled: config.enabled,
+      configured,
     }
   }
 
@@ -285,6 +412,34 @@ class Config {
     fs.writeFileSync(getPath("game.json"), JSON.stringify(nextConfig, null, 2))
 
     return Config.managerSettings()
+  }
+
+  static updateOidc(settings: OidcConfigInput) {
+    const currentConfig = Config.authConfig().oidc
+    const nextClientSecret =
+      settings.clearClientSecret === true
+        ? ""
+        : settings.clientSecret !== undefined
+          ? settings.clientSecret.trim()
+          : currentConfig.clientSecret
+    const nextConfig: AuthConfig = {
+      oidc: Config.normalizeStoredOidcConfig({
+        ...currentConfig,
+        enabled: settings.enabled,
+        autoProvisionEnabled: settings.autoProvisionEnabled,
+        discoveryUrl: settings.discoveryUrl,
+        clientId: settings.clientId,
+        clientSecret: nextClientSecret,
+        scopes: settings.scopes,
+        roleClaimPath: settings.roleClaimPath,
+        adminRoleValues: settings.adminRoleValues,
+        managerRoleValues: settings.managerRoleValues,
+      }),
+    }
+
+    Config.writeAuthConfig(nextConfig)
+
+    return Config.oidc()
   }
 
   static uploadMedia(filename: string, content: string) {
