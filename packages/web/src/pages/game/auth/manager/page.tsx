@@ -6,6 +6,7 @@ import type {
   ManagerSettingsUpdate,
   OidcConfig,
   OidcConfigInput,
+  OidcStatus,
   Quizz,
   QuizzWithId,
   QuizRunHistorySummary,
@@ -31,7 +32,7 @@ import { useQuestionStore } from "@mindbuzz/web/features/game/stores/question"
 import clsx from "clsx"
 import { useEffect, useMemo, useState } from "react"
 import toast from "react-hot-toast"
-import { useNavigate } from "react-router"
+import { useLocation, useNavigate } from "react-router"
 
 const downloadCsv = (filename: string, content: string) => {
   const blob = new Blob([content], { type: "text/csv;charset=utf-8;" })
@@ -70,6 +71,10 @@ const DEFAULT_OIDC_CONFIG: OidcConfig = {
   adminRoleValues: ["mindbuzz-admin"],
   managerRoleValues: ["mindbuzz-manager"],
 }
+const DEFAULT_OIDC_STATUS: OidcStatus = {
+  enabled: false,
+  configured: false,
+}
 
 const readManagerAuth = () => {
   try {
@@ -93,7 +98,8 @@ const persistManagerAuth = (value: boolean) => {
 
 const ManagerAuthPage = () => {
   const navigate = useNavigate()
-  const { socket } = useSocket()
+  const location = useLocation()
+  const { socket, clientId, isConnected } = useSocket()
   const { reset, setGameId, setPlayers, setStatus } = useManagerStore()
   const { setQuestionStates } = useQuestionStore()
 
@@ -109,6 +115,8 @@ const ManagerAuthPage = () => {
   const [managers, setManagers] = useState<ManagerAccount[]>([])
   const [activeGame, setActiveGame] = useState<ActiveManagerGame | null>(null)
   const [oidcConfig, setOidcConfig] = useState<OidcConfig>(DEFAULT_OIDC_CONFIG)
+  const [oidcStatus, setOidcStatus] = useState<OidcStatus>(DEFAULT_OIDC_STATUS)
+  const [pendingOidcCompletion, setPendingOidcCompletion] = useState(false)
   const hasAuthenticatedManager = isAuth && manager !== null
 
   const tabs = useMemo(
@@ -178,6 +186,10 @@ const ManagerAuthPage = () => {
     toast.success("SSO settings saved")
   })
 
+  useEvent("manager:oidcStatus", (status) => {
+    setOidcStatus(status)
+  })
+
   useEvent("manager:managerCreated", () => {
     toast.success("Manager created")
   })
@@ -200,6 +212,8 @@ const ManagerAuthPage = () => {
       setManagers([])
       setActiveGame(null)
       setOidcConfig(DEFAULT_OIDC_CONFIG)
+      setOidcStatus(DEFAULT_OIDC_STATUS)
+      setPendingOidcCompletion(false)
       reset()
       setQuestionStates(null)
     }
@@ -373,10 +387,77 @@ const ManagerAuthPage = () => {
     setManagers([])
     setActiveGame(null)
     setOidcConfig(DEFAULT_OIDC_CONFIG)
+    setOidcStatus(DEFAULT_OIDC_STATUS)
+    setPendingOidcCompletion(false)
     reset()
     setQuestionStates(null)
     socket?.emit("manager:logout")
     navigate("/manager")
+  }
+
+  useEffect(() => {
+    fetch("/auth/oidc/status", {
+      method: "GET",
+      cache: "no-store",
+    })
+      .then(async (response) => {
+        if (!response.ok) {
+          throw new Error("Failed to load SSO status")
+        }
+
+        return (await response.json()) as OidcStatus
+      })
+      .then((status) => {
+        setOidcStatus(status)
+      })
+      .catch((error) => {
+        console.error("Failed to load OIDC status", error)
+      })
+  }, [])
+
+  useEffect(() => {
+    const params = new URLSearchParams(location.search)
+    const oidcResult = params.get("oidc")
+
+    if (!oidcResult) {
+      return
+    }
+
+    if (oidcResult === "error") {
+      toast.error(params.get("message") ?? "SSO sign-in failed")
+      navigate(location.pathname || "/manager", { replace: true })
+
+      return
+    }
+
+    if (oidcResult === "success") {
+      setPendingOidcCompletion(true)
+      navigate(location.pathname || "/manager", { replace: true })
+    }
+  }, [location.pathname, location.search, navigate])
+
+  useEffect(() => {
+    if (!pendingOidcCompletion || !socket || !isConnected) {
+      return
+    }
+
+    setPendingOidcCompletion(false)
+    socket.emit("manager:completeOidcLogin")
+  }, [isConnected, pendingOidcCompletion, socket])
+
+  const handleStartSsoLogin = () => {
+    if (!clientId) {
+      toast.error("Unable to start SSO without a client session")
+
+      return
+    }
+
+    const params = new URLSearchParams({
+      clientId,
+      returnTo: "/manager",
+    })
+
+    window.location.assign(`/auth/oidc/login?${params.toString()}`)
   }
 
   const editingQuizz = quizzList.find((quizz) => quizz.id === editingQuizzId)
@@ -403,7 +484,12 @@ const ManagerAuthPage = () => {
     content = (
       <div className="relative z-10 flex min-h-dvh w-full flex-col items-center justify-center px-4 py-6">
         <img src={logo} className="mb-10 h-16" alt="MindBuzz logo" />
-        <ManagerPassword onSubmit={handleAuth} />
+        <ManagerPassword
+          onSubmit={handleAuth}
+          onSsoLogin={handleStartSsoLogin}
+          showSsoButton={oidcStatus.enabled && oidcStatus.configured}
+          isBusy={pendingOidcCompletion}
+        />
       </div>
     )
   } else if (!hasAuthenticatedManager) {
