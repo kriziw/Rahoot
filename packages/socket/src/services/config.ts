@@ -437,6 +437,33 @@ class Config {
       }),
     }
 
+    if (nextConfig.oidc.enabled) {
+      if (!nextConfig.oidc.discoveryUrl) {
+        throw new Error("Discovery URL is required when SSO is enabled")
+      }
+
+      if (!nextConfig.oidc.clientId) {
+        throw new Error("Client ID is required when SSO is enabled")
+      }
+
+      if (!nextConfig.oidc.clientSecret) {
+        throw new Error("Client secret is required when SSO is enabled")
+      }
+
+      if (!nextConfig.oidc.roleClaimPath) {
+        throw new Error("Role claim path is required when SSO is enabled")
+      }
+
+      if (
+        nextConfig.oidc.adminRoleValues.length === 0 &&
+        nextConfig.oidc.managerRoleValues.length === 0
+      ) {
+        throw new Error(
+          "Configure at least one admin or manager role value when SSO is enabled",
+        )
+      }
+    }
+
     Config.writeAuthConfig(nextConfig)
 
     return Config.oidc()

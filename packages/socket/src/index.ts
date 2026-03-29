@@ -276,6 +276,7 @@ const emitManagerDashboard = (socket: Socket, manager: ManagerSession) => {
     "manager:activeGame",
     activeGame ? activeGame.getActiveManagerGame(clientId) : null,
   )
+  socket.emit("manager:oidcStatus", OidcAuth.status())
 
   if (manager.role === "admin") {
     socket.emit("manager:managersList", AccountStore.listManagers())
@@ -422,6 +423,38 @@ io.on("connection", (socket) => {
     }
 
     socket.emit("manager:managersList", AccountStore.listManagers())
+  })
+
+  socket.on("manager:getOidcConfig", () => {
+    const manager = requireAdminManager(socket)
+
+    if (!manager) {
+      return
+    }
+
+    socket.emit("manager:oidcConfig", Config.oidc())
+    socket.emit("manager:oidcStatus", OidcAuth.status())
+  })
+
+  socket.on("manager:updateOidcConfig", (settings) => {
+    const manager = requireAdminManager(socket)
+
+    if (!manager) {
+      return
+    }
+
+    try {
+      const nextConfig = Config.updateOidc(settings)
+
+      socket.emit("manager:oidcConfig", nextConfig)
+      socket.emit("manager:oidcConfigSaved", nextConfig)
+      socket.emit("manager:oidcStatus", OidcAuth.status())
+    } catch (error) {
+      socket.emit(
+        "manager:errorMessage",
+        error instanceof Error ? error.message : "Failed to update SSO settings",
+      )
+    }
   })
 
   socket.on("manager:createManager", ({ username, password }) => {

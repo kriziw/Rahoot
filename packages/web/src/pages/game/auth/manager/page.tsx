@@ -4,6 +4,8 @@ import type {
   ManagerSession,
   ManagerSettings,
   ManagerSettingsUpdate,
+  OidcConfig,
+  OidcConfigInput,
   Quizz,
   QuizzWithId,
   QuizRunHistorySummary,
@@ -18,6 +20,7 @@ import ManagersPanel from "@mindbuzz/web/features/game/components/create/Manager
 import ManagerPassword from "@mindbuzz/web/features/game/components/create/ManagerPassword"
 import QuizzEditor from "@mindbuzz/web/features/game/components/create/QuizzEditor"
 import SelectQuizz from "@mindbuzz/web/features/game/components/create/SelectQuizz"
+import SsoSettingsPanel from "@mindbuzz/web/features/game/components/create/SsoSettingsPanel"
 import SettingsPanel from "@mindbuzz/web/features/game/components/create/SettingsPanel"
 import {
   useEvent,
@@ -48,10 +51,25 @@ const BASE_TABS = [
 ] as const
 
 const ADMIN_TAB = { id: "managers", label: "Managers" } as const
+const ADMIN_SSO_TAB = { id: "sso", label: "SSO" } as const
 
-type ManagerTab = (typeof BASE_TABS)[number]["id"] | typeof ADMIN_TAB["id"]
+type ManagerTab =
+  | (typeof BASE_TABS)[number]["id"]
+  | typeof ADMIN_TAB["id"]
+  | typeof ADMIN_SSO_TAB["id"]
 
 const MANAGER_AUTH_STORAGE_KEY = "manager_auth"
+const DEFAULT_OIDC_CONFIG: OidcConfig = {
+  enabled: false,
+  autoProvisionEnabled: false,
+  discoveryUrl: "",
+  clientId: "",
+  hasClientSecret: false,
+  scopes: ["openid", "profile", "email"],
+  roleClaimPath: "groups",
+  adminRoleValues: ["mindbuzz-admin"],
+  managerRoleValues: ["mindbuzz-manager"],
+}
 
 const readManagerAuth = () => {
   try {
@@ -90,12 +108,13 @@ const ManagerAuthPage = () => {
   const [uploadedAudioUrl, setUploadedAudioUrl] = useState<string | null>(null)
   const [managers, setManagers] = useState<ManagerAccount[]>([])
   const [activeGame, setActiveGame] = useState<ActiveManagerGame | null>(null)
+  const [oidcConfig, setOidcConfig] = useState<OidcConfig>(DEFAULT_OIDC_CONFIG)
   const hasAuthenticatedManager = isAuth && manager !== null
 
   const tabs = useMemo(
     () =>
       manager?.role === "admin"
-        ? [...BASE_TABS, ADMIN_TAB]
+        ? [...BASE_TABS, ADMIN_TAB, ADMIN_SSO_TAB]
         : [...BASE_TABS],
     [manager?.role],
   )
@@ -122,7 +141,10 @@ const ManagerAuthPage = () => {
     setManager(manager)
     setRequiresSetup(false)
 
-    if (manager.role !== "admin" && activeTab === "managers") {
+    if (
+      manager.role !== "admin" &&
+      (activeTab === "managers" || activeTab === "sso")
+    ) {
       setActiveTab("quizzes")
     }
   })
@@ -147,6 +169,15 @@ const ManagerAuthPage = () => {
     setActiveGame(game)
   })
 
+  useEvent("manager:oidcConfig", (config) => {
+    setOidcConfig(config)
+  })
+
+  useEvent("manager:oidcConfigSaved", (config) => {
+    setOidcConfig(config)
+    toast.success("SSO settings saved")
+  })
+
   useEvent("manager:managerCreated", () => {
     toast.success("Manager created")
   })
@@ -168,6 +199,7 @@ const ManagerAuthPage = () => {
       setUploadedAudioUrl(null)
       setManagers([])
       setActiveGame(null)
+      setOidcConfig(DEFAULT_OIDC_CONFIG)
       reset()
       setQuestionStates(null)
     }
@@ -275,6 +307,8 @@ const ManagerAuthPage = () => {
 
     if (tab === "managers") {
       socket?.emit("manager:listManagers")
+    } else if (tab === "sso") {
+      socket?.emit("manager:getOidcConfig")
     }
   }
 
@@ -308,6 +342,10 @@ const ManagerAuthPage = () => {
     socket?.emit("manager:setManagerDisabled", data)
   }
 
+  const handleSaveOidcConfig = (config: OidcConfigInput) => {
+    socket?.emit("manager:updateOidcConfig", config)
+  }
+
   const handleResumeOrTakeOver = () => {
     if (!activeGame) {
       return
@@ -334,6 +372,7 @@ const ManagerAuthPage = () => {
     setUploadedAudioUrl(null)
     setManagers([])
     setActiveGame(null)
+    setOidcConfig(DEFAULT_OIDC_CONFIG)
     reset()
     setQuestionStates(null)
     socket?.emit("manager:logout")
@@ -405,6 +444,8 @@ const ManagerAuthPage = () => {
           onResetPassword={handleResetManagerPassword}
           onSetDisabled={handleSetManagerDisabled}
         />
+      ) : activeTab === "sso" && manager?.role === "admin" ? (
+        <SsoSettingsPanel config={oidcConfig} onSave={handleSaveOidcConfig} />
       ) : (
         <SelectQuizz
           quizzList={quizzList}
