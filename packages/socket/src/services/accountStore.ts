@@ -104,6 +104,37 @@ class AccountStore {
     return normalized
   }
 
+  private static generateAvailableUsername(baseUsername: string) {
+    const db = AccountStore.getDb()
+    const sanitizedBase = baseUsername
+      .trim()
+      .toLowerCase()
+      .replace(/[^a-z0-9._-]+/g, "-")
+      .replace(/^-+|-+$/g, "")
+    const fallbackBase = `user-${randomBytes(2).toString("hex")}`
+    let normalizedBase = (sanitizedBase || fallbackBase).slice(0, 20)
+
+    if (normalizedBase.length < 4) {
+      normalizedBase = `${normalizedBase}${fallbackBase}`.slice(0, 20)
+    }
+
+    let candidate = AccountStore.normalizeUsername(normalizedBase)
+    let suffix = 1
+
+    while (
+      db.prepare(
+        "SELECT 1 FROM managers WHERE username = ? LIMIT 1",
+      ).get(candidate)
+    ) {
+      suffix += 1
+      const suffixText = `-${suffix}`
+      const trimmedBase = normalizedBase.slice(0, 20 - suffixText.length)
+      candidate = AccountStore.normalizeUsername(`${trimmedBase}${suffixText}`)
+    }
+
+    return candidate
+  }
+
   private static createManagerRecord(
     username: string,
     password: string,
@@ -321,6 +352,18 @@ class AccountStore {
     return formatManager(manager)
   }
 
+  static createOidcManager(username: string, role: ManagerAccount["role"]) {
+    const generatedPassword = randomBytes(24).toString("hex")
+    const safeUsername = AccountStore.generateAvailableUsername(username)
+    const manager = AccountStore.createManagerRecord(
+      safeUsername,
+      generatedPassword,
+      role,
+    )
+
+    return formatManager(manager)
+  }
+
   static resetManagerPassword(managerId: string, password: string) {
     const db = AccountStore.getDb()
     const now = new Date().toISOString()
@@ -351,6 +394,25 @@ class AccountStore {
       SET disabled_at = ?, updated_at = ?
       WHERE id = ?
     `).run(disabledAt, now, managerId)
+
+    const manager = AccountStore.getManagerById(managerId)
+
+    if (!manager) {
+      throw new Error("Manager not found")
+    }
+
+    return manager
+  }
+
+  static updateManagerRole(managerId: string, role: ManagerAccount["role"]) {
+    const db = AccountStore.getDb()
+    const now = new Date().toISOString()
+
+    db.prepare(`
+      UPDATE managers
+      SET role = ?, updated_at = ?
+      WHERE id = ?
+    `).run(role, now, managerId)
 
     const manager = AccountStore.getManagerById(managerId)
 

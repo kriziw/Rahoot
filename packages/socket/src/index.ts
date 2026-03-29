@@ -5,10 +5,11 @@ import AccountStore from "@mindbuzz/socket/services/accountStore"
 import Config from "@mindbuzz/socket/services/config"
 import Game from "@mindbuzz/socket/services/game"
 import History from "@mindbuzz/socket/services/history"
+import OidcAuth from "@mindbuzz/socket/services/oidcAuth"
 import Registry from "@mindbuzz/socket/services/registry"
 import { withGame } from "@mindbuzz/socket/utils/game"
 import fs from "fs"
-import { createServer } from "http"
+import { createServer, type IncomingMessage, type ServerResponse } from "http"
 import { extname, relative, resolve } from "path"
 import { Server as ServerIO } from "socket.io"
 
@@ -26,6 +27,42 @@ const mimeTypes: Record<string, string> = {
 const getMimeType = (filename: string) =>
   mimeTypes[extname(filename).toLowerCase()] ?? "application/octet-stream"
 
+const sendJson = (
+  res: ServerResponse<IncomingMessage>,
+  statusCode: number,
+  body: unknown,
+) => {
+  res.writeHead(statusCode, {
+    "Content-Type": "application/json; charset=utf-8",
+    "Cache-Control": "no-store",
+  })
+  res.end(JSON.stringify(body))
+}
+
+const getRequestOrigin = (req: IncomingMessage) => {
+  const forwardedProto = req.headers["x-forwarded-proto"]
+  const protocol = Array.isArray(forwardedProto)
+    ? forwardedProto[0]
+    : forwardedProto ?? "http"
+  const host = req.headers["x-forwarded-host"] ?? req.headers.host ?? "localhost"
+
+  return `${protocol}://${host}`
+}
+
+const buildManagerRedirect = (
+  origin: string,
+  returnTo: string | undefined,
+  params: Record<string, string>,
+) => {
+  const redirectTarget = new URL(returnTo && returnTo.startsWith("/") ? returnTo : "/manager", origin)
+
+  Object.entries(params).forEach(([key, value]) => {
+    redirectTarget.searchParams.set(key, value)
+  })
+
+  return redirectTarget.toString()
+}
+
 const httpServer = createServer((req, res) => {
   if (!req.url) {
     res.statusCode = 404
@@ -37,6 +74,109 @@ const httpServer = createServer((req, res) => {
   const requestUrl = new URL(req.url, `http://${req.headers.host ?? "localhost"}`)
 
   if (requestUrl.pathname.startsWith("/ws")) {
+    return
+  }
+
+  if (req.method === "GET" && requestUrl.pathname === "/auth/oidc/status") {
+    sendJson(res, 200, OidcAuth.status())
+
+    return
+  }
+
+  if (req.method === "GET" && requestUrl.pathname === "/auth/oidc/login") {
+    const clientId = requestUrl.searchParams.get("clientId")?.trim() ?? ""
+    const returnTo = requestUrl.searchParams.get("returnTo") ?? "/manager"
+
+    if (!clientId) {
+      res.writeHead(400, { "Content-Type": "text/plain; charset=utf-8" })
+      res.end("clientId is required")
+
+      return
+    }
+
+    const redirectUri = new URL("/auth/oidc/callback", getRequestOrigin(req)).toString()
+
+    OidcAuth.buildAuthorizationUrl({
+      clientId,
+      returnTo,
+      redirectUri,
+    })
+      .then((authorizationUrl) => {
+        res.writeHead(302, {
+          Location: authorizationUrl,
+          "Cache-Control": "no-store",
+        })
+        res.end()
+      })
+      .catch((error) => {
+        const message =
+          error instanceof Error ? error.message : "Failed to start SSO login"
+        const redirectUrl = buildManagerRedirect(getRequestOrigin(req), returnTo, {
+          oidc: "error",
+          message,
+        })
+
+        res.writeHead(302, {
+          Location: redirectUrl,
+          "Cache-Control": "no-store",
+        })
+        res.end()
+      })
+
+    return
+  }
+
+  if (req.method === "GET" && requestUrl.pathname === "/auth/oidc/callback") {
+    const code = requestUrl.searchParams.get("code")
+    const state = requestUrl.searchParams.get("state")
+    const redirectUri = new URL("/auth/oidc/callback", getRequestOrigin(req)).toString()
+
+    if (!code || !state) {
+      const redirectUrl = buildManagerRedirect(getRequestOrigin(req), "/manager", {
+        oidc: "error",
+        message: "Missing OIDC callback parameters",
+      })
+
+      res.writeHead(302, {
+        Location: redirectUrl,
+        "Cache-Control": "no-store",
+      })
+      res.end()
+
+      return
+    }
+
+    OidcAuth.handleCallback({
+      code,
+      state,
+      redirectUri,
+    })
+      .then((returnTo) => {
+        const redirectUrl = buildManagerRedirect(getRequestOrigin(req), returnTo, {
+          oidc: "success",
+        })
+
+        res.writeHead(302, {
+          Location: redirectUrl,
+          "Cache-Control": "no-store",
+        })
+        res.end()
+      })
+      .catch((error) => {
+        const message =
+          error instanceof Error ? error.message : "Failed to complete SSO login"
+        const redirectUrl = buildManagerRedirect(getRequestOrigin(req), "/manager", {
+          oidc: "error",
+          message,
+        })
+
+        res.writeHead(302, {
+          Location: redirectUrl,
+          "Cache-Control": "no-store",
+        })
+        res.end()
+      })
+
     return
   }
 
@@ -241,6 +381,20 @@ io.on("connection", (socket) => {
         error instanceof Error ? error.message : "Failed to sign in",
       )
     }
+  })
+
+  socket.on("manager:completeOidcLogin", () => {
+    const clientId = getSocketClientId(socket)
+    const handoff = OidcAuth.consumeLoginHandoff(clientId)
+
+    if (!handoff) {
+      socket.emit("manager:errorMessage", "No pending SSO login was found")
+
+      return
+    }
+
+    authenticatedManagers.set(clientId, handoff.manager)
+    emitManagerDashboard(socket, handoff.manager)
   })
 
   socket.on("manager:getDashboard", () => {
