@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.9.1](https://github.com/kriziw/MindBuzz/compare/v1.9.0...v1.9.1) (2026-03-29)
+
+
+### Bug Fixes
+
+* trigger OIDC hotfix release ([f74c3c7](https://github.com/kriziw/MindBuzz/commit/f74c3c77e3491c0b97803897d061b91390b58be5))
+
 ## [1.9.0](https://github.com/kriziw/MindBuzz/compare/v1.8.1...v1.9.0) (2026-03-29)
 
 
