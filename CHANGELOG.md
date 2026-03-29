@@ -1,5 +1,13 @@
 # Changelog
 
+## [1.8.1](https://github.com/kriziw/MindBuzz/compare/v1.8.0...v1.8.1) (2026-03-29)
+
+
+### Bug Fixes
+
+* clean up github actions deprecation warnings ([f968694](https://github.com/kriziw/MindBuzz/commit/f9686941dac1aa97d8ab01ab274c79e8606ec3b4))
+* clean up github actions deprecation warnings ([7e806bf](https://github.com/kriziw/MindBuzz/commit/7e806bf7192344af594595d4b7a5df758f5f60af))
+
 ## [1.8.0](https://github.com/kriziw/MindBuzz/compare/v1.7.0...v1.8.0) (2026-03-29)
 
 
