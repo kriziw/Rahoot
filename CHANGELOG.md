@@ -1,5 +1,13 @@
 # Changelog
 
+## [1.10.2](https://github.com/kriziw/MindBuzz/compare/v1.10.1...v1.10.2) (2026-03-29)
+
+
+### Bug Fixes
+
+* add SSO settings validation button ([1440185](https://github.com/kriziw/MindBuzz/commit/1440185f4359a1d2646de787ce85a5dc234f0c80))
+* add SSO settings validation button ([3668b46](https://github.com/kriziw/MindBuzz/commit/3668b460f4030ba34b3e50bb3297459d8b8a2922))
+
 ## [1.10.1](https://github.com/kriziw/MindBuzz/compare/v1.10.0...v1.10.1) (2026-03-29)
 
 
