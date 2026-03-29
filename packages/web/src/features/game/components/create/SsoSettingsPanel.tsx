@@ -1,4 +1,8 @@
-import type { OidcConfig, OidcConfigInput } from "@mindbuzz/common/types/game"
+import type {
+  OidcConfig,
+  OidcConfigInput,
+  OidcConfigTestResult,
+} from "@mindbuzz/common/types/game"
 import Button from "@mindbuzz/web/features/game/components/Button"
 import Input from "@mindbuzz/web/features/game/components/Input"
 import { useEffect, useState } from "react"
@@ -6,6 +10,9 @@ import { useEffect, useState } from "react"
 type Props = {
   config: OidcConfig
   onSave: (_config: OidcConfigInput) => void
+  onTest: (_config: OidcConfigInput) => void
+  isTesting: boolean
+  testResult: OidcConfigTestResult | null
 }
 
 const listToText = (values: string[]) => values.join(", ")
@@ -16,7 +23,13 @@ const parseList = (value: string) =>
     .map((item) => item.trim())
     .filter(Boolean)
 
-const SsoSettingsPanel = ({ config, onSave }: Props) => {
+const SsoSettingsPanel = ({
+  config,
+  onSave,
+  onTest,
+  isTesting,
+  testResult,
+}: Props) => {
   const [enabled, setEnabled] = useState(config.enabled)
   const [autoProvisionEnabled, setAutoProvisionEnabled] = useState(
     config.autoProvisionEnabled,
@@ -47,8 +60,7 @@ const SsoSettingsPanel = ({ config, onSave }: Props) => {
     setManagerRoleValues(listToText(config.managerRoleValues))
   }, [config])
 
-  const handleSave = () => {
-    onSave({
+  const buildConfigInput = (): OidcConfigInput => ({
       enabled,
       autoProvisionEnabled,
       discoveryUrl: discoveryUrl.trim(),
@@ -60,6 +72,13 @@ const SsoSettingsPanel = ({ config, onSave }: Props) => {
       adminRoleValues: parseList(adminRoleValues),
       managerRoleValues: parseList(managerRoleValues),
     })
+
+  const handleSave = () => {
+    onSave(buildConfigInput())
+  }
+
+  const handleTest = () => {
+    onTest(buildConfigInput())
   }
 
   return (
@@ -225,7 +244,44 @@ const SsoSettingsPanel = ({ config, onSave }: Props) => {
           </span>
         </div>
 
-        <div className="mt-4 flex justify-end">
+        {testResult && (
+          <div className="mt-4 rounded-md border border-green-100 bg-green-50 p-3 text-sm text-green-900">
+            <p className="font-semibold">SSO discovery test succeeded</p>
+            <p className="mt-1 break-all">
+              Issuer:
+              <span className="ml-2 font-mono text-xs">{testResult.issuer}</span>
+            </p>
+            <p className="mt-1 break-all">
+              Authorization endpoint:
+              <span className="ml-2 font-mono text-xs">
+                {testResult.authorizationEndpoint}
+              </span>
+            </p>
+            <p className="mt-1 break-all">
+              Token endpoint:
+              <span className="ml-2 font-mono text-xs">
+                {testResult.tokenEndpoint}
+              </span>
+            </p>
+            {testResult.userinfoEndpoint && (
+              <p className="mt-1 break-all">
+                Userinfo endpoint:
+                <span className="ml-2 font-mono text-xs">
+                  {testResult.userinfoEndpoint}
+                </span>
+              </p>
+            )}
+          </div>
+        )}
+
+        <div className="mt-4 flex flex-col gap-3 sm:flex-row sm:justify-end">
+          <Button
+            className="bg-white px-4 !text-black"
+            onClick={handleTest}
+            type="button"
+          >
+            {isTesting ? "Testing SSO..." : "Test SSO settings"}
+          </Button>
           <Button className="px-4" onClick={handleSave} type="button">
             Save SSO settings
           </Button>

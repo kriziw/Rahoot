@@ -6,6 +6,7 @@ import type {
   ManagerSettingsUpdate,
   OidcConfig,
   OidcConfigInput,
+  OidcConfigTestResult,
   OidcStatus,
   Quizz,
   QuizzWithId,
@@ -116,6 +117,9 @@ const ManagerAuthPage = () => {
   const [activeGame, setActiveGame] = useState<ActiveManagerGame | null>(null)
   const [oidcConfig, setOidcConfig] = useState<OidcConfig>(DEFAULT_OIDC_CONFIG)
   const [oidcStatus, setOidcStatus] = useState<OidcStatus>(DEFAULT_OIDC_STATUS)
+  const [oidcTestResult, setOidcTestResult] =
+    useState<OidcConfigTestResult | null>(null)
+  const [isTestingOidcConfig, setIsTestingOidcConfig] = useState(false)
   const [pendingOidcCompletion, setPendingOidcCompletion] = useState(false)
   const hasAuthenticatedManager = isAuth && manager !== null
 
@@ -186,6 +190,12 @@ const ManagerAuthPage = () => {
     toast.success("SSO settings saved")
   })
 
+  useEvent("manager:oidcConfigTested", (result) => {
+    setIsTestingOidcConfig(false)
+    setOidcTestResult(result)
+    toast.success(`SSO discovery loaded from ${result.issuer}`)
+  })
+
   useEvent("manager:oidcStatus", (status) => {
     setOidcStatus(status)
   })
@@ -213,10 +223,14 @@ const ManagerAuthPage = () => {
       setActiveGame(null)
       setOidcConfig(DEFAULT_OIDC_CONFIG)
       setOidcStatus(DEFAULT_OIDC_STATUS)
+      setOidcTestResult(null)
+      setIsTestingOidcConfig(false)
       setPendingOidcCompletion(false)
       reset()
       setQuestionStates(null)
     }
+
+    setIsTestingOidcConfig(false)
 
     toast.error(message)
   })
@@ -322,6 +336,7 @@ const ManagerAuthPage = () => {
     if (tab === "managers") {
       socket?.emit("manager:listManagers")
     } else if (tab === "sso") {
+      setOidcTestResult(null)
       socket?.emit("manager:getOidcConfig")
     }
   }
@@ -357,7 +372,20 @@ const ManagerAuthPage = () => {
   }
 
   const handleSaveOidcConfig = (config: OidcConfigInput) => {
+    setOidcTestResult(null)
     socket?.emit("manager:updateOidcConfig", config)
+  }
+
+  const handleTestOidcConfig = (config: OidcConfigInput) => {
+    if (!socket) {
+      toast.error("Unable to test SSO settings while disconnected")
+
+      return
+    }
+
+    setOidcTestResult(null)
+    setIsTestingOidcConfig(true)
+    socket.emit("manager:testOidcConfig", config)
   }
 
   const handleResumeOrTakeOver = () => {
@@ -388,6 +416,8 @@ const ManagerAuthPage = () => {
     setActiveGame(null)
     setOidcConfig(DEFAULT_OIDC_CONFIG)
     setOidcStatus(DEFAULT_OIDC_STATUS)
+    setOidcTestResult(null)
+    setIsTestingOidcConfig(false)
     setPendingOidcCompletion(false)
     reset()
     setQuestionStates(null)
@@ -531,7 +561,13 @@ const ManagerAuthPage = () => {
           onSetDisabled={handleSetManagerDisabled}
         />
       ) : activeTab === "sso" && manager?.role === "admin" ? (
-        <SsoSettingsPanel config={oidcConfig} onSave={handleSaveOidcConfig} />
+        <SsoSettingsPanel
+          config={oidcConfig}
+          onSave={handleSaveOidcConfig}
+          onTest={handleTestOidcConfig}
+          isTesting={isTestingOidcConfig}
+          testResult={oidcTestResult}
+        />
       ) : (
         <SelectQuizz
           quizzList={quizzList}

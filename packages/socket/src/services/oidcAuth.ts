@@ -1,6 +1,8 @@
 import type {
   ManagerRole,
   ManagerSession,
+  OidcConfigInput,
+  OidcConfigTestResult,
   OidcStatus,
 } from "@mindbuzz/common/types/game"
 import AccountStore from "@mindbuzz/socket/services/accountStore"
@@ -179,7 +181,43 @@ class OidcAuth {
       throw new Error("OIDC discovery URL is not configured")
     }
 
-    return OidcAuth.fetchJson<DiscoveryDocument>(config.discoveryUrl)
+    const discovery = await OidcAuth.fetchJson<DiscoveryDocument>(config.discoveryUrl)
+
+    return OidcAuth.validateDiscoveryDocument(discovery)
+  }
+
+  private static validateDiscoveryDocument(discovery: DiscoveryDocument) {
+    if (!discovery.issuer) {
+      throw new Error("OIDC discovery document is missing an issuer")
+    }
+
+    if (!discovery.authorization_endpoint) {
+      throw new Error(
+        "OIDC discovery document is missing an authorization endpoint",
+      )
+    }
+
+    if (!discovery.token_endpoint) {
+      throw new Error("OIDC discovery document is missing a token endpoint")
+    }
+
+    return discovery
+  }
+
+  static async testConfiguration(
+    settings: OidcConfigInput,
+  ): Promise<OidcConfigTestResult> {
+    const config = Config.validateTestableOidcConfig(settings)
+    const discovery = OidcAuth.validateDiscoveryDocument(
+      await OidcAuth.fetchJson<DiscoveryDocument>(config.discoveryUrl),
+    )
+
+    return {
+      issuer: discovery.issuer,
+      authorizationEndpoint: discovery.authorization_endpoint,
+      tokenEndpoint: discovery.token_endpoint,
+      userinfoEndpoint: discovery.userinfo_endpoint,
+    }
   }
 
   static async buildAuthorizationUrl(input: {

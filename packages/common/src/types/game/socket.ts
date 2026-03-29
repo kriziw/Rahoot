@@ -8,6 +8,7 @@ import type {
   ManagerSettingsUpdate,
   OidcConfig,
   OidcConfigInput,
+  OidcConfigTestResult,
   OidcStatus,
   Player,
   Quizz,
@@ -93,6 +94,7 @@ export interface ServerToClientEvents {
   "manager:settings": (_settings: ManagerSettings) => void
   "manager:oidcConfig": (_config: OidcConfig) => void
   "manager:oidcConfigSaved": (_config: OidcConfig) => void
+  "manager:oidcConfigTested": (_result: OidcConfigTestResult) => void
   "manager:oidcStatus": (_status: OidcStatus) => void
   "manager:oidcIdentities": (_identities: ManagerOidcIdentity[]) => void
   "manager:mediaUploaded": (_data: { url: string }) => void
@@ -127,6 +129,7 @@ export interface ClientToServerEvents {
   "manager:updateSettings": (_data: ManagerSettingsUpdate) => void
   "manager:getOidcConfig": () => void
   "manager:updateOidcConfig": (_data: OidcConfigInput) => void
+  "manager:testOidcConfig": (_data: OidcConfigInput) => void
   "manager:completeOidcLogin": () => void
   "manager:uploadMedia": (_data: { filename: string; content: string }) => void
   "manager:downloadHistory": (_data: { runId: string }) => void
