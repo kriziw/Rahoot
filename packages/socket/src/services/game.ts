@@ -236,8 +236,16 @@ class Game {
   }
 
   reconnect(socket: Socket) {
+    const reconnectingClientId = socket.handshake.auth.clientId
+
+    if (this.manager.clientId === reconnectingClientId) {
+      this.reconnectManager(socket)
+
+      return
+    }
+
     const isPlayer = this.players.some(
-      (player) => player.clientId === socket.handshake.auth.clientId,
+      (player) => player.clientId === reconnectingClientId,
     )
 
     if (isPlayer) {
@@ -676,11 +684,16 @@ class Game {
       return
     }
 
+    this.terminate("Quiz ended by manager")
+  }
+
+  terminate(reason: string) {
     this.abortCooldown()
     this.started = false
     this.clearPendingPlayerRemovals()
+    this.revokeManagerControl(reason)
 
-    this.io.to(this.gameId).emit("game:reset", "Quiz ended by manager")
+    this.io.to(this.gameId).emit("game:reset", reason)
     registry.removeGame(this.gameId)
   }
 

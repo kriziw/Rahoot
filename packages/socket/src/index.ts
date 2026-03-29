@@ -188,8 +188,7 @@ const revokeManagerAccountAccess = (managerId: string, reason: string) => {
     return
   }
 
-  activeGame.revokeManagerControl(reason)
-  registry.markGameAsEmpty(activeGame)
+  activeGame.terminate(reason)
 }
 
 console.log(`Socket server running on port ${WS_PORT}`)
