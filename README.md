@@ -31,6 +31,7 @@ The original project is a great lightweight self-hosted Kahoot-style game. This 
 - CSV export for the current run and retrospective exports from history
 - Per-manager settings and password management
 - Admin-only manager account management for creating, disabling, and resetting manager accounts
+- Optional generic OpenID Connect (OIDC) / OAuth2 SSO for manager sign-in
 - Support for remote audio URLs and local audio uploads stored in `media/`
 - Improved manager session persistence and explicit logout flow
 - One active game per manager account with explicit take over from another session
@@ -42,6 +43,7 @@ The original project is a great lightweight self-hosted Kahoot-style game. This 
 - Self-hosted multiplayer quiz sessions
 - Host / manager interface plus player join flow by room code
 - Manager-owned quizzes, settings, and history stored in SQLite at `config/history.db`
+- Optional dual-path manager authentication with local login or SSO
 - Optional image, video, and audio per question
 - Global fallback audio when a question does not define its own audio
 - Docker-first deployment with persistent config and media volumes
@@ -125,6 +127,7 @@ docker run -d \
 1. Open [http://localhost:3000/manager](http://localhost:3000/manager)
 2. On a fresh install, create the initial admin account
 3. Sign in with your manager account
+   You can use either local credentials or SSO when SSO is enabled and configured.
 4. Create, edit, delete, or launch a quiz
 5. Share the main app URL and room code with players
 6. Run the quiz
@@ -165,6 +168,43 @@ Fields:
 
 - `managerPassword`: used only for one-time migration from older installs
 - `defaultAudio`: legacy fallback audio value imported into the first migrated admin account
+
+### `config/auth.json`
+
+MindBuzz stores OIDC provider settings in a file-backed auth config so you can
+recover from a bad SSO setup without editing the database.
+
+This file is managed from the admin UI at `/manager` -> `SSO`.
+
+Example:
+
+```json
+{
+  "oidc": {
+    "enabled": true,
+    "autoProvisionEnabled": true,
+    "discoveryUrl": "https://id.example.com/application/o/mindbuzz/.well-known/openid-configuration",
+    "clientId": "mindbuzz",
+    "clientSecret": "replace-me",
+    "scopes": ["openid", "profile", "email"],
+    "roleClaimPath": "groups",
+    "adminRoleValues": ["mindbuzz-admin"],
+    "managerRoleValues": ["mindbuzz-manager"]
+  }
+}
+```
+
+Fields:
+
+- `enabled`: shows the `Sign in with SSO` option on the manager page
+- `autoProvisionEnabled`: allows the identity provider to create users automatically on first login
+- `discoveryUrl`: provider OpenID configuration URL
+- `clientId`: OIDC client identifier
+- `clientSecret`: OIDC client secret
+- `scopes`: requested scopes, typically `openid`, `profile`, `email`
+- `roleClaimPath`: dotted claim path used for role mapping, such as `groups`
+- `adminRoleValues`: claim values that map to the local `admin` role
+- `managerRoleValues`: claim values that map to the local `manager` role
 
 ### `config/quizz/*.json`
 
@@ -219,6 +259,57 @@ The manager UI now covers much more than starting a game:
 - set a default audio track by URL or upload a local file
 - see the current active game and take over control from another session if needed
 - create and manage non-admin manager accounts when signed in as an admin
+- configure OIDC / SSO entirely from the admin UI while still persisting it to `config/auth.json`
+
+## SSO / OIDC
+
+MindBuzz supports a generic OpenID Connect provider, including self-hosted
+providers like Authentik.
+
+### Authentication model
+
+- the first admin account is always created locally
+- local username/password login remains available
+- SSO is optional and can be enabled later by an admin
+- once enabled, the manager login page offers either local login or `Sign in with SSO`
+
+### Role mapping
+
+MindBuzz keeps application authorization local, but it can map roles from your
+identity provider at login time.
+
+Example:
+
+- `roleClaimPath`: `groups`
+- `adminRoleValues`: `mindbuzz-admin`
+- `managerRoleValues`: `mindbuzz-manager`
+
+Behavior:
+
+- if the configured claim contains an admin role value, the user becomes a local `admin`
+- otherwise, if it contains a manager role value, the user becomes a local `manager`
+- if neither matches, sign-in is denied
+
+If `autoProvisionEnabled` is on, a matching SSO user can be created
+automatically on first login. If it is off, only already-linked users can sign
+in through SSO.
+
+### Redirect URI
+
+Configure your identity provider to use:
+
+- `https://your-domain.example/auth/oidc/callback`
+
+For local development, the equivalent route is:
+
+- `http://localhost:3000/auth/oidc/callback`
+
+### Recovery and fallback
+
+- the SSO configuration is written to `config/auth.json`, not hidden only in the database
+- local admin login remains the break-glass fallback if your provider or mapping is misconfigured
+- if needed, you can disable or repair SSO by editing `config/auth.json` directly
+- disabling a local manager account still blocks access even if the identity provider grants a valid role
 
 ## Releases
 
