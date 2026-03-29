@@ -67,6 +67,22 @@ class Database {
     `)
 
     db.exec(`
+      CREATE TABLE IF NOT EXISTS manager_oidc_identities (
+        id TEXT PRIMARY KEY,
+        manager_id TEXT NOT NULL,
+        issuer TEXT NOT NULL,
+        subject TEXT NOT NULL,
+        email TEXT,
+        username_claim TEXT,
+        last_login_at TEXT,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL,
+        FOREIGN KEY (manager_id) REFERENCES managers(id) ON DELETE CASCADE,
+        UNIQUE (issuer, subject)
+      ) STRICT
+    `)
+
+    db.exec(`
       CREATE TABLE IF NOT EXISTS quiz_runs (
         id TEXT PRIMARY KEY,
         game_id TEXT NOT NULL,
@@ -91,6 +107,11 @@ class Database {
     db.exec(`
       CREATE INDEX IF NOT EXISTS idx_quiz_runs_manager_id
       ON quiz_runs(manager_id)
+    `)
+
+    db.exec(`
+      CREATE INDEX IF NOT EXISTS idx_manager_oidc_identities_manager_id
+      ON manager_oidc_identities(manager_id)
     `)
   }
 

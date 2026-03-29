@@ -55,6 +55,48 @@ export type ManagerSettings = {
   defaultAudio?: string
 }
 
+export type OidcConfig = {
+  enabled: boolean
+  autoProvisionEnabled: boolean
+  discoveryUrl: string
+  clientId: string
+  hasClientSecret: boolean
+  scopes: string[]
+  roleClaimPath: string
+  adminRoleValues: string[]
+  managerRoleValues: string[]
+}
+
+export type OidcConfigInput = {
+  enabled: boolean
+  autoProvisionEnabled: boolean
+  discoveryUrl: string
+  clientId: string
+  clientSecret?: string
+  clearClientSecret?: boolean
+  scopes: string[]
+  roleClaimPath: string
+  adminRoleValues: string[]
+  managerRoleValues: string[]
+}
+
+export type OidcStatus = {
+  enabled: boolean
+  configured: boolean
+}
+
+export type ManagerOidcIdentity = {
+  id: string
+  managerId: string
+  issuer: string
+  subject: string
+  email: string | null
+  usernameClaim: string | null
+  lastLoginAt: string | null
+  createdAt: string
+  updatedAt: string
+}
+
 export type ManagerSettingsUpdate = {
   password?: string
   defaultAudio?: string | null

@@ -2,9 +2,13 @@ import type {
   ActiveManagerGame,
   GameUpdateQuestion,
   ManagerAccount,
+  ManagerOidcIdentity,
   ManagerSession,
   ManagerSettings,
   ManagerSettingsUpdate,
+  OidcConfig,
+  OidcConfigInput,
+  OidcStatus,
   Player,
   Quizz,
   QuizzWithId,
@@ -87,6 +91,10 @@ export interface ServerToClientEvents {
     content: string
   }) => void
   "manager:settings": (_settings: ManagerSettings) => void
+  "manager:oidcConfig": (_config: OidcConfig) => void
+  "manager:oidcConfigSaved": (_config: OidcConfig) => void
+  "manager:oidcStatus": (_status: OidcStatus) => void
+  "manager:oidcIdentities": (_identities: ManagerOidcIdentity[]) => void
   "manager:mediaUploaded": (_data: { url: string }) => void
 }
 
@@ -117,6 +125,9 @@ export interface ClientToServerEvents {
     disabled: boolean
   }) => void
   "manager:updateSettings": (_data: ManagerSettingsUpdate) => void
+  "manager:getOidcConfig": () => void
+  "manager:updateOidcConfig": (_data: OidcConfigInput) => void
+  "manager:completeOidcLogin": () => void
   "manager:uploadMedia": (_data: { filename: string; content: string }) => void
   "manager:downloadHistory": (_data: { runId: string }) => void
   "manager:logout": () => void
