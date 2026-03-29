@@ -5,13 +5,25 @@ import { type KeyboardEvent, useState } from "react"
 
 type Props = {
   onSubmit: (_credentials: { username: string; password: string }) => void
+  onSsoLogin?: () => void
+  showSsoButton?: boolean
+  isBusy?: boolean
 }
 
-const ManagerPassword = ({ onSubmit }: Props) => {
+const ManagerPassword = ({
+  onSubmit,
+  onSsoLogin,
+  showSsoButton = false,
+  isBusy = false,
+}: Props) => {
   const [username, setUsername] = useState("")
   const [password, setPassword] = useState("")
 
   const handleSubmit = () => {
+    if (isBusy) {
+      return
+    }
+
     onSubmit({
       username,
       password,
@@ -31,6 +43,7 @@ const ManagerPassword = ({ onSubmit }: Props) => {
         value={username}
         onChange={(e) => setUsername(e.target.value)}
         onKeyDown={handleKeyDown}
+        disabled={isBusy}
         placeholder="Username"
       />
       <Input
@@ -38,9 +51,25 @@ const ManagerPassword = ({ onSubmit }: Props) => {
         value={password}
         onChange={(e) => setPassword(e.target.value)}
         onKeyDown={handleKeyDown}
+        disabled={isBusy}
         placeholder="Password"
       />
-      <Button onClick={handleSubmit}>Sign in</Button>
+      <Button disabled={isBusy} onClick={handleSubmit}>
+        {isBusy ? "Completing sign in..." : "Sign in"}
+      </Button>
+      {showSsoButton && onSsoLogin && (
+        <>
+          <div className="text-center text-sm font-semibold text-gray-500">or</div>
+          <Button
+            className="bg-white !text-black"
+            disabled={isBusy}
+            onClick={onSsoLogin}
+            type="button"
+          >
+            Sign in with SSO
+          </Button>
+        </>
+      )}
     </Form>
   )
 }

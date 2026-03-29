@@ -16,6 +16,9 @@ export default defineConfig({
     port: 3000,
     host: "0.0.0.0",
     proxy: {
+      "/auth": {
+        target: "http://localhost:3001",
+      },
       "/media": {
         target: "http://localhost:3001",
       },

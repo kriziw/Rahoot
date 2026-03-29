@@ -4,6 +4,9 @@ import type {
   ManagerSession,
   ManagerSettings,
   ManagerSettingsUpdate,
+  OidcConfig,
+  OidcConfigInput,
+  OidcStatus,
   Quizz,
   QuizzWithId,
   QuizRunHistorySummary,
@@ -18,6 +21,7 @@ import ManagersPanel from "@mindbuzz/web/features/game/components/create/Manager
 import ManagerPassword from "@mindbuzz/web/features/game/components/create/ManagerPassword"
 import QuizzEditor from "@mindbuzz/web/features/game/components/create/QuizzEditor"
 import SelectQuizz from "@mindbuzz/web/features/game/components/create/SelectQuizz"
+import SsoSettingsPanel from "@mindbuzz/web/features/game/components/create/SsoSettingsPanel"
 import SettingsPanel from "@mindbuzz/web/features/game/components/create/SettingsPanel"
 import {
   useEvent,
@@ -28,7 +32,7 @@ import { useQuestionStore } from "@mindbuzz/web/features/game/stores/question"
 import clsx from "clsx"
 import { useEffect, useMemo, useState } from "react"
 import toast from "react-hot-toast"
-import { useNavigate } from "react-router"
+import { useLocation, useNavigate } from "react-router"
 
 const downloadCsv = (filename: string, content: string) => {
   const blob = new Blob([content], { type: "text/csv;charset=utf-8;" })
@@ -48,10 +52,29 @@ const BASE_TABS = [
 ] as const
 
 const ADMIN_TAB = { id: "managers", label: "Managers" } as const
+const ADMIN_SSO_TAB = { id: "sso", label: "SSO" } as const
 
-type ManagerTab = (typeof BASE_TABS)[number]["id"] | typeof ADMIN_TAB["id"]
+type ManagerTab =
+  | (typeof BASE_TABS)[number]["id"]
+  | typeof ADMIN_TAB["id"]
+  | typeof ADMIN_SSO_TAB["id"]
 
 const MANAGER_AUTH_STORAGE_KEY = "manager_auth"
+const DEFAULT_OIDC_CONFIG: OidcConfig = {
+  enabled: false,
+  autoProvisionEnabled: false,
+  discoveryUrl: "",
+  clientId: "",
+  hasClientSecret: false,
+  scopes: ["openid", "profile", "email"],
+  roleClaimPath: "groups",
+  adminRoleValues: ["mindbuzz-admin"],
+  managerRoleValues: ["mindbuzz-manager"],
+}
+const DEFAULT_OIDC_STATUS: OidcStatus = {
+  enabled: false,
+  configured: false,
+}
 
 const readManagerAuth = () => {
   try {
@@ -75,7 +98,8 @@ const persistManagerAuth = (value: boolean) => {
 
 const ManagerAuthPage = () => {
   const navigate = useNavigate()
-  const { socket } = useSocket()
+  const location = useLocation()
+  const { socket, clientId, isConnected } = useSocket()
   const { reset, setGameId, setPlayers, setStatus } = useManagerStore()
   const { setQuestionStates } = useQuestionStore()
 
@@ -90,12 +114,15 @@ const ManagerAuthPage = () => {
   const [uploadedAudioUrl, setUploadedAudioUrl] = useState<string | null>(null)
   const [managers, setManagers] = useState<ManagerAccount[]>([])
   const [activeGame, setActiveGame] = useState<ActiveManagerGame | null>(null)
+  const [oidcConfig, setOidcConfig] = useState<OidcConfig>(DEFAULT_OIDC_CONFIG)
+  const [oidcStatus, setOidcStatus] = useState<OidcStatus>(DEFAULT_OIDC_STATUS)
+  const [pendingOidcCompletion, setPendingOidcCompletion] = useState(false)
   const hasAuthenticatedManager = isAuth && manager !== null
 
   const tabs = useMemo(
     () =>
       manager?.role === "admin"
-        ? [...BASE_TABS, ADMIN_TAB]
+        ? [...BASE_TABS, ADMIN_TAB, ADMIN_SSO_TAB]
         : [...BASE_TABS],
     [manager?.role],
   )
@@ -122,7 +149,10 @@ const ManagerAuthPage = () => {
     setManager(manager)
     setRequiresSetup(false)
 
-    if (manager.role !== "admin" && activeTab === "managers") {
+    if (
+      manager.role !== "admin" &&
+      (activeTab === "managers" || activeTab === "sso")
+    ) {
       setActiveTab("quizzes")
     }
   })
@@ -147,6 +177,19 @@ const ManagerAuthPage = () => {
     setActiveGame(game)
   })
 
+  useEvent("manager:oidcConfig", (config) => {
+    setOidcConfig(config)
+  })
+
+  useEvent("manager:oidcConfigSaved", (config) => {
+    setOidcConfig(config)
+    toast.success("SSO settings saved")
+  })
+
+  useEvent("manager:oidcStatus", (status) => {
+    setOidcStatus(status)
+  })
+
   useEvent("manager:managerCreated", () => {
     toast.success("Manager created")
   })
@@ -168,6 +211,9 @@ const ManagerAuthPage = () => {
       setUploadedAudioUrl(null)
       setManagers([])
       setActiveGame(null)
+      setOidcConfig(DEFAULT_OIDC_CONFIG)
+      setOidcStatus(DEFAULT_OIDC_STATUS)
+      setPendingOidcCompletion(false)
       reset()
       setQuestionStates(null)
     }
@@ -275,6 +321,8 @@ const ManagerAuthPage = () => {
 
     if (tab === "managers") {
       socket?.emit("manager:listManagers")
+    } else if (tab === "sso") {
+      socket?.emit("manager:getOidcConfig")
     }
   }
 
@@ -308,6 +356,10 @@ const ManagerAuthPage = () => {
     socket?.emit("manager:setManagerDisabled", data)
   }
 
+  const handleSaveOidcConfig = (config: OidcConfigInput) => {
+    socket?.emit("manager:updateOidcConfig", config)
+  }
+
   const handleResumeOrTakeOver = () => {
     if (!activeGame) {
       return
@@ -334,10 +386,78 @@ const ManagerAuthPage = () => {
     setUploadedAudioUrl(null)
     setManagers([])
     setActiveGame(null)
+    setOidcConfig(DEFAULT_OIDC_CONFIG)
+    setOidcStatus(DEFAULT_OIDC_STATUS)
+    setPendingOidcCompletion(false)
     reset()
     setQuestionStates(null)
     socket?.emit("manager:logout")
     navigate("/manager")
+  }
+
+  useEffect(() => {
+    fetch("/auth/oidc/status", {
+      method: "GET",
+      cache: "no-store",
+    })
+      .then(async (response) => {
+        if (!response.ok) {
+          throw new Error("Failed to load SSO status")
+        }
+
+        return (await response.json()) as OidcStatus
+      })
+      .then((status) => {
+        setOidcStatus(status)
+      })
+      .catch((error) => {
+        console.error("Failed to load OIDC status", error)
+      })
+  }, [])
+
+  useEffect(() => {
+    const params = new URLSearchParams(location.search)
+    const oidcResult = params.get("oidc")
+
+    if (!oidcResult) {
+      return
+    }
+
+    if (oidcResult === "error") {
+      toast.error(params.get("message") ?? "SSO sign-in failed")
+      navigate(location.pathname || "/manager", { replace: true })
+
+      return
+    }
+
+    if (oidcResult === "success") {
+      setPendingOidcCompletion(true)
+      navigate(location.pathname || "/manager", { replace: true })
+    }
+  }, [location.pathname, location.search, navigate])
+
+  useEffect(() => {
+    if (!pendingOidcCompletion || !socket || !isConnected) {
+      return
+    }
+
+    setPendingOidcCompletion(false)
+    socket.emit("manager:completeOidcLogin")
+  }, [isConnected, pendingOidcCompletion, socket])
+
+  const handleStartSsoLogin = () => {
+    if (!clientId) {
+      toast.error("Unable to start SSO without a client session")
+
+      return
+    }
+
+    const params = new URLSearchParams({
+      clientId,
+      returnTo: "/manager",
+    })
+
+    window.location.assign(`/auth/oidc/login?${params.toString()}`)
   }
 
   const editingQuizz = quizzList.find((quizz) => quizz.id === editingQuizzId)
@@ -364,7 +484,12 @@ const ManagerAuthPage = () => {
     content = (
       <div className="relative z-10 flex min-h-dvh w-full flex-col items-center justify-center px-4 py-6">
         <img src={logo} className="mb-10 h-16" alt="MindBuzz logo" />
-        <ManagerPassword onSubmit={handleAuth} />
+        <ManagerPassword
+          onSubmit={handleAuth}
+          onSsoLogin={handleStartSsoLogin}
+          showSsoButton={oidcStatus.enabled && oidcStatus.configured}
+          isBusy={pendingOidcCompletion}
+        />
       </div>
     )
   } else if (!hasAuthenticatedManager) {
@@ -405,6 +530,8 @@ const ManagerAuthPage = () => {
           onResetPassword={handleResetManagerPassword}
           onSetDisabled={handleSetManagerDisabled}
         />
+      ) : activeTab === "sso" && manager?.role === "admin" ? (
+        <SsoSettingsPanel config={oidcConfig} onSave={handleSaveOidcConfig} />
       ) : (
         <SelectQuizz
           quizzList={quizzList}
