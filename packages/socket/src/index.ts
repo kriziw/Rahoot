@@ -39,14 +39,43 @@ const sendJson = (
   res.end(JSON.stringify(body))
 }
 
-const getRequestOrigin = (req: IncomingMessage) => {
-  const forwardedProto = req.headers["x-forwarded-proto"]
-  const protocol = Array.isArray(forwardedProto)
-    ? forwardedProto[0]
-    : forwardedProto ?? "http"
-  const host = req.headers["x-forwarded-host"] ?? req.headers.host ?? "localhost"
+const getForwardedHeaderValue = (value: string | string[] | undefined) => {
+  const rawValue = Array.isArray(value) ? value[0] : value
 
-  return `${protocol}://${host}`
+  return rawValue?.split(",")[0]?.trim() ?? ""
+}
+
+const normalizeRequestProtocol = (value: string) =>
+  value.toLowerCase() === "https" ? "https" : "http"
+
+const normalizeRequestHost = (value: string) =>
+  value && !/[\s/\\]/.test(value) ? value : "localhost"
+
+const getRequestOrigin = (req: IncomingMessage) => {
+  const protocol = normalizeRequestProtocol(
+    getForwardedHeaderValue(req.headers["x-forwarded-proto"]) || "http",
+  )
+  const host = normalizeRequestHost(
+    getForwardedHeaderValue(req.headers["x-forwarded-host"]) ||
+      getForwardedHeaderValue(req.headers.host) ||
+      "localhost",
+  )
+
+  try {
+    return new URL(`${protocol}://${host}`).origin
+  } catch {
+    return "http://localhost"
+  }
+}
+
+const normalizeManagerReturnPath = (returnTo: string | undefined) => {
+  const normalizedPath = returnTo?.trim() ?? ""
+
+  if (!normalizedPath.startsWith("/") || normalizedPath.startsWith("//")) {
+    return "/manager"
+  }
+
+  return normalizedPath
 }
 
 const buildManagerRedirect = (
@@ -54,7 +83,7 @@ const buildManagerRedirect = (
   returnTo: string | undefined,
   params: Record<string, string>,
 ) => {
-  const redirectTarget = new URL(returnTo && returnTo.startsWith("/") ? returnTo : "/manager", origin)
+  const redirectTarget = new URL(normalizeManagerReturnPath(returnTo), origin)
 
   Object.entries(params).forEach(([key, value]) => {
     redirectTarget.searchParams.set(key, value)
@@ -85,7 +114,9 @@ const httpServer = createServer((req, res) => {
 
   if (req.method === "GET" && requestUrl.pathname === "/auth/oidc/login") {
     const clientId = requestUrl.searchParams.get("clientId")?.trim() ?? ""
-    const returnTo = requestUrl.searchParams.get("returnTo") ?? "/manager"
+    const returnTo = normalizeManagerReturnPath(
+      requestUrl.searchParams.get("returnTo") ?? "/manager",
+    )
 
     if (!clientId) {
       res.writeHead(400, { "Content-Type": "text/plain; charset=utf-8" })
