@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.10.0](https://github.com/kriziw/MindBuzz/compare/v1.9.1...v1.10.0) (2026-03-29)
+
+
+### Features
+
+* land full OIDC stack on main ([6f21c03](https://github.com/kriziw/MindBuzz/commit/6f21c0391e7d7eeb49b14903e58c2b975001f560))
+
 ## [1.9.1](https://github.com/kriziw/MindBuzz/compare/v1.9.0...v1.9.1) (2026-03-29)
 
 
