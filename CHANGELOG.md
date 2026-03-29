@@ -1,5 +1,20 @@
 # Changelog
 
+## [1.8.0](https://github.com/kriziw/MindBuzz/compare/v1.7.0...v1.8.0) (2026-03-29)
+
+
+### Features
+
+* add manager accounts and admin bootstrap ([428355b](https://github.com/kriziw/MindBuzz/commit/428355bce542c82c3fe3e3f0d3d6f61713b9958d))
+* add manager accounts and admin bootstrap ([fbf567a](https://github.com/kriziw/MindBuzz/commit/fbf567a0b02631cdddd6ad43b307bdaa2220b852))
+
+
+### Bug Fixes
+
+* address manager account review regressions ([cf89e07](https://github.com/kriziw/MindBuzz/commit/cf89e0702081bc4e09914638e2ae3db2aa6c6a5f))
+* bump picomatch to 4.0.4 ([50ec734](https://github.com/kriziw/MindBuzz/commit/50ec734bcf0c4db96c30d2a10ea67f00dfcc71c7))
+* bump picomatch to 4.0.4 ([43bf02c](https://github.com/kriziw/MindBuzz/commit/43bf02c89d666a1807a49c1d1521eff380a9ebce))
+
 ## [1.7.0](https://github.com/kriziw/MindBuzz/compare/v1.6.1...v1.7.0) (2026-03-28)
 
 
