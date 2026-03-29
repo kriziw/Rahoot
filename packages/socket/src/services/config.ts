@@ -7,6 +7,7 @@ import type {
   Quizz,
   QuizzWithId,
 } from "@mindbuzz/common/types/game"
+import { normalizeAudioUrl } from "@mindbuzz/common/utils/audio"
 import {
   type RawQuizz,
   normalizeOptionalAsset,
@@ -213,7 +214,7 @@ class Config {
     const config = Config.game()
 
     return {
-      defaultAudio: normalizeOptionalAsset(config.defaultAudio),
+      defaultAudio: normalizeAudioUrl(config.defaultAudio),
     }
   }
 
@@ -400,12 +401,14 @@ class Config {
     if (settings.defaultAudio === null) {
       delete nextConfig.defaultAudio
     } else if (settings.defaultAudio !== undefined) {
-      const defaultAudio = normalizeOptionalAsset(settings.defaultAudio)
+      const defaultAudio = normalizeAudioUrl(settings.defaultAudio)
 
-      if (defaultAudio) {
-        nextConfig.defaultAudio = defaultAudio
-      } else {
+      if (!settings.defaultAudio.trim()) {
         delete nextConfig.defaultAudio
+      } else if (!defaultAudio) {
+        throw new Error("Default audio must use https/http or a local /media/ URL")
+      } else {
+        nextConfig.defaultAudio = defaultAudio
       }
     }
 

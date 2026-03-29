@@ -2,6 +2,10 @@ import type {
   ManagerSettings,
   ManagerSettingsUpdate,
 } from "@mindbuzz/common/types/game"
+import {
+  LOCAL_MEDIA_PREFIX,
+  normalizeAudioUrl,
+} from "@mindbuzz/common/utils/audio"
 import Button from "@mindbuzz/web/features/game/components/Button"
 import Input from "@mindbuzz/web/features/game/components/Input"
 import { useEffect, useState } from "react"
@@ -14,10 +18,8 @@ type Props = {
   onUploadLocalAudio: (_data: { filename: string; content: string }) => void
 }
 
-const LOCAL_AUDIO_PREFIX = "/media/"
-
 const getAudioSource = (value?: string) =>
-  value?.startsWith(LOCAL_AUDIO_PREFIX) ? "local" : "remote"
+  value?.startsWith(LOCAL_MEDIA_PREFIX) ? "local" : "remote"
 
 const readFileAsBase64 = (file: File) =>
   new Promise<string>((resolve, reject) => {
@@ -96,6 +98,12 @@ const SettingsPanel = ({
     const nextAudio =
       audioSource === "remote" ? remoteAudioUrl.trim() : localAudioUrl.trim()
 
+    if (nextAudio && !normalizeAudioUrl(nextAudio)) {
+      toast.error("Use an http/https audio URL or a local /media/ file")
+
+      return
+    }
+
     onSave({
       password: password.trim() || undefined,
       defaultAudio: nextAudio || null,
@@ -103,7 +111,17 @@ const SettingsPanel = ({
     setPassword("")
   }
 
-  const currentAudio = audioSource === "remote" ? remoteAudioUrl : localAudioUrl
+  const savedAudio = normalizeAudioUrl(settings.defaultAudio)
+  const uploadedAudio = normalizeAudioUrl(uploadedAudioUrl)
+  const previewAudio =
+    audioSource === "local"
+      ? uploadedAudio ??
+        (savedAudio?.startsWith(LOCAL_MEDIA_PREFIX) ? savedAudio : undefined)
+      : uploadedAudio
+        ? undefined
+        : savedAudio && !savedAudio.startsWith(LOCAL_MEDIA_PREFIX)
+          ? savedAudio
+          : undefined
 
   return (
     <div className="z-10 flex w-full max-w-4xl flex-col gap-5 rounded-md bg-white p-4 shadow-sm md:p-6">
@@ -208,8 +226,8 @@ const SettingsPanel = ({
           </Button>
         </div>
 
-        {currentAudio && (
-          <audio className="mt-4 w-full" controls src={currentAudio} />
+        {previewAudio && (
+          <audio className="mt-4 w-full" controls src={previewAudio} />
         )}
       </section>
     </div>
