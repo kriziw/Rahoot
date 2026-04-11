@@ -64,7 +64,11 @@ Choose one setup path:
 The simplest way to run MindBuzz is with Docker Compose:
 
 ```bash
-docker compose up -d
+git clone https://github.com/kriziw/MindBuzz.git
+cd MindBuzz
+mkdir -p config media
+docker compose -f compose.yml pull
+docker compose -f compose.yml up -d
 ```
 
 The app will be available at [http://localhost:3000](http://localhost:3000).
@@ -84,6 +88,8 @@ Those folders persist:
 - legacy migration files in `config/`
 - quiz run history
 - uploaded local media
+
+If users access MindBuzz through a domain or reverse proxy, point the public HTTPS host at container port `3000` and preserve `Host`, `X-Forwarded-Proto`, and WebSocket `Upgrade` / `Connection` headers. MindBuzz normally uses same-origin browser requests, so a standard reverse-proxy install does not need a separate public base URL environment variable. If SSO is enabled, configure the identity provider callback to match the public URL, for example `https://quiz.example.com/auth/oidc/callback`.
 
 ### Docker Run
 
