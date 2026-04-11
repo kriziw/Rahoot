@@ -9,6 +9,8 @@
 
 MindBuzz is a self-hosted quiz platform for classrooms, team sessions, events, and internal training. This repository is an enhanced fork of the original [Ralex91/Rahoot](https://github.com/Ralex91/Rahoot), expanding the manager experience with richer quiz administration, run history, exports, settings, media support, and mobile reconnect improvements.
 
+Public documentation is available at [kriziw.github.io/mindbuzz](https://kriziw.github.io/mindbuzz/).
+
 Original credit belongs to [Ralex91](https://github.com/Ralex91) for the original Rahoot project and foundation.
 
 > Warning: the project is still under active development. If you hit bugs or have feature ideas, please open an [issue](https://github.com/kriziw/MindBuzz/issues).
